@@ -1,0 +1,3 @@
+class HiveLocalDataSource {
+  const HiveLocalDataSource();
+}

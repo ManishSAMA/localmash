@@ -1,0 +1,3 @@
+class EncryptionService {
+  const EncryptionService();
+}

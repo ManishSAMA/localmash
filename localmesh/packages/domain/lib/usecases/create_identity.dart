@@ -1,0 +1,3 @@
+class CreateIdentity {
+  const CreateIdentity();
+}

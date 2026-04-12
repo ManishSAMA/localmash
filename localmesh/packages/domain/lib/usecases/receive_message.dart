@@ -1,0 +1,3 @@
+class ReceiveMessage {
+  const ReceiveMessage();
+}

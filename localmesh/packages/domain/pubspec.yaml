@@ -1,0 +1,10 @@
+name: domain
+description: Domain layer for LocalMesh — pure Dart, no Flutter dependencies.
+version: 0.1.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  uuid: ^4.0.0
+  meta: ^1.9.0

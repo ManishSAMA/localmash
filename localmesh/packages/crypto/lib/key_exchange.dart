@@ -1,0 +1,3 @@
+class KeyExchangeService {
+  const KeyExchangeService();
+}

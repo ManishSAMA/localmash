@@ -1,0 +1,17 @@
+name: data
+description: Data layer for LocalMesh — Hive repositories.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  domain:
+    path: ../domain
+  crypto_layer:
+    path: ../crypto
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0

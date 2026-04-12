@@ -1,0 +1,16 @@
+name: transport
+description: Transport layer for LocalMesh — BLE, Wi-Fi Direct, and Mock transports.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  domain:
+    path: ../domain
+  crypto_layer:
+    path: ../crypto
+  async: ^2.11.0

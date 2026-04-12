@@ -1,0 +1,3 @@
+class SendMessage {
+  const SendMessage();
+}

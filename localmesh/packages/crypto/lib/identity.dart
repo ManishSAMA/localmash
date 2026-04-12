@@ -1,0 +1,3 @@
+class IdentityService {
+  const IdentityService();
+}
