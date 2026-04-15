@@ -10,7 +10,7 @@ void main() {
     });
 
     test('generates non-empty key pairs with correct lengths', () async {
-      final identity = await service.generateIdentity('Alice');
+      final identity = await service.generate('Alice');
 
       expect(identity.signingPublicKey, hasLength(32));
       expect(identity.signingPrivateKey, hasLength(32));
@@ -20,15 +20,15 @@ void main() {
     });
 
     test('two calls produce different identities', () async {
-      final a = await service.generateIdentity('Alice');
-      final b = await service.generateIdentity('Alice');
+      final a = await service.generate('Alice');
+      final b = await service.generate('Alice');
 
       expect(a.signingPublicKey, isNot(equals(b.signingPublicKey)));
       expect(a.encryptionPublicKey, isNot(equals(b.encryptionPublicKey)));
     });
 
     test('fingerprint is exactly 16 hex characters', () async {
-      final identity = await service.generateIdentity('Alice');
+      final identity = await service.generate('Alice');
 
       expect(identity.fingerprint, hasLength(16));
       expect(
@@ -38,7 +38,7 @@ void main() {
     });
 
     test('fingerprint is deterministic for the same public key', () async {
-      final identity = await service.generateIdentity('Alice');
+      final identity = await service.generate('Alice');
 
       final fp1 = await service.computeFingerprint(identity.signingPublicKey);
       final fp2 = await service.computeFingerprint(identity.signingPublicKey);
@@ -48,8 +48,8 @@ void main() {
     });
 
     test('different public keys produce different fingerprints', () async {
-      final a = await service.generateIdentity('Alice');
-      final b = await service.generateIdentity('Bob');
+      final a = await service.generate('Alice');
+      final b = await service.generate('Bob');
 
       expect(a.fingerprint, isNot(equals(b.fingerprint)));
     });

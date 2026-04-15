@@ -13,13 +13,13 @@ enum MessageType {
 class LocalMeshMessage {
   const LocalMeshMessage({
     required this.id,
-    this.version = 1,
+    required this.version,
     required this.type,
     required this.senderId,
     required this.recipientId,
     required this.payload,
-    this.hopCount = 0,
-    this.ttl = 5,
+    required this.hopCount,
+    required this.ttl,
     required this.lamportTs,
     required this.signature,
     required this.createdAt,
@@ -37,19 +37,47 @@ class LocalMeshMessage {
   final List<int> signature;
   final int createdAt;
 
-  LocalMeshMessage copyWith({int? hopCount}) {
+  bool get isBroadcast => recipientId == '*';
+  bool get canForward => hopCount < ttl;
+
+  LocalMeshMessage copyWith({
+    String? id,
+    int? version,
+    MessageType? type,
+    String? senderId,
+    String? recipientId,
+    List<int>? payload,
+    int? hopCount,
+    int? ttl,
+    int? lamportTs,
+    List<int>? signature,
+    int? createdAt,
+  }) {
     return LocalMeshMessage(
-      id: id,
-      version: version,
-      type: type,
-      senderId: senderId,
-      recipientId: recipientId,
-      payload: payload,
+      id: id ?? this.id,
+      version: version ?? this.version,
+      type: type ?? this.type,
+      senderId: senderId ?? this.senderId,
+      recipientId: recipientId ?? this.recipientId,
+      payload: payload ?? this.payload,
       hopCount: hopCount ?? this.hopCount,
-      ttl: ttl,
-      lamportTs: lamportTs,
-      signature: signature,
-      createdAt: createdAt,
+      ttl: ttl ?? this.ttl,
+      lamportTs: lamportTs ?? this.lamportTs,
+      signature: signature ?? this.signature,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalMeshMessage && other.id == id);
+
+  @override
+  int get hashCode => id.hashCode;
+
+  @override
+  String toString() =>
+      'LocalMeshMessage(id: $id, type: $type, from: $senderId, '
+      'to: $recipientId, hop: $hopCount/$ttl, ts: $lamportTs)';
 }

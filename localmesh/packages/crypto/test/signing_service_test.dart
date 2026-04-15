@@ -40,10 +40,10 @@ void main() {
 
     test('message signed with Alice key verifies with Alice public key',
         () async {
-      final alice = await identityService.generateIdentity('Alice');
+      final alice = await identityService.generate('Alice');
       final msg = _makeMessage(senderId: alice.fingerprint);
 
-      final sigBytes = await signingService.signMessage(
+      final sigBytes = await signingService.sign(
         message: msg,
         signingPrivateKey: alice.signingPrivateKey,
         signingPublicKey: alice.signingPublicKey,
@@ -53,7 +53,7 @@ void main() {
         signature: sigBytes,
       );
 
-      final valid = await signingService.verifyMessage(
+      final valid = await signingService.verify(
         message: signed,
         signingPublicKey: alice.signingPublicKey,
       );
@@ -62,11 +62,11 @@ void main() {
 
     test('message signed with Alice key does NOT verify with Bob public key',
         () async {
-      final alice = await identityService.generateIdentity('Alice');
-      final bob = await identityService.generateIdentity('Bob');
+      final alice = await identityService.generate('Alice');
+      final bob = await identityService.generate('Bob');
       final msg = _makeMessage(senderId: alice.fingerprint);
 
-      final sigBytes = await signingService.signMessage(
+      final sigBytes = await signingService.sign(
         message: msg,
         signingPrivateKey: alice.signingPrivateKey,
         signingPublicKey: alice.signingPublicKey,
@@ -76,7 +76,7 @@ void main() {
         signature: sigBytes,
       );
 
-      final valid = await signingService.verifyMessage(
+      final valid = await signingService.verify(
         message: signed,
         signingPublicKey: bob.signingPublicKey,
       );
@@ -84,13 +84,13 @@ void main() {
     });
 
     test('tampering with payload invalidates signature', () async {
-      final alice = await identityService.generateIdentity('Alice');
+      final alice = await identityService.generate('Alice');
       final original = _makeMessage(
         senderId: alice.fingerprint,
         payload: [1, 2, 3, 4],
       );
 
-      final sigBytes = await signingService.signMessage(
+      final sigBytes = await signingService.sign(
         message: original,
         signingPrivateKey: alice.signingPrivateKey,
         signingPublicKey: alice.signingPublicKey,
@@ -111,7 +111,7 @@ void main() {
         createdAt: original.createdAt,
       );
 
-      final valid = await signingService.verifyMessage(
+      final valid = await signingService.verify(
         message: tampered,
         signingPublicKey: alice.signingPublicKey,
       );
@@ -119,13 +119,13 @@ void main() {
     });
 
     test('tampering with hopCount does NOT invalidate signature', () async {
-      final alice = await identityService.generateIdentity('Alice');
+      final alice = await identityService.generate('Alice');
       final original = _makeMessage(
         senderId: alice.fingerprint,
         hopCount: 0,
       );
 
-      final sigBytes = await signingService.signMessage(
+      final sigBytes = await signingService.sign(
         message: original,
         signingPrivateKey: alice.signingPrivateKey,
         signingPublicKey: alice.signingPublicKey,
@@ -146,7 +146,7 @@ void main() {
         createdAt: original.createdAt,
       );
 
-      final valid = await signingService.verifyMessage(
+      final valid = await signingService.verify(
         message: relayed,
         signingPublicKey: alice.signingPublicKey,
       );
@@ -154,13 +154,13 @@ void main() {
     });
 
     test('tampering with TTL DOES invalidate signature', () async {
-      final alice = await identityService.generateIdentity('Alice');
+      final alice = await identityService.generate('Alice');
       final original = _makeMessage(
         senderId: alice.fingerprint,
         ttl: 5,
       );
 
-      final sigBytes = await signingService.signMessage(
+      final sigBytes = await signingService.sign(
         message: original,
         signingPrivateKey: alice.signingPrivateKey,
         signingPublicKey: alice.signingPublicKey,
@@ -180,7 +180,7 @@ void main() {
         createdAt: original.createdAt,
       );
 
-      final valid = await signingService.verifyMessage(
+      final valid = await signingService.verify(
         message: tampered,
         signingPublicKey: alice.signingPublicKey,
       );
@@ -188,13 +188,13 @@ void main() {
     });
 
     test('empty signature returns false, does not throw', () async {
-      final alice = await identityService.generateIdentity('Alice');
+      final alice = await identityService.generate('Alice');
       final msg = _makeMessage(
         senderId: alice.fingerprint,
         signature: const [],
       );
 
-      final valid = await signingService.verifyMessage(
+      final valid = await signingService.verify(
         message: msg,
         signingPublicKey: alice.signingPublicKey,
       );

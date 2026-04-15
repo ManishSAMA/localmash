@@ -12,8 +12,8 @@ void main() {
     final signing = SigningService();
 
     // 1. Both peers have identities
-    final alice = await identityService.generateIdentity('Alice');
-    final bob = await identityService.generateIdentity('Bob');
+    final alice = await identityService.generate('Alice');
+    final bob = await identityService.generate('Bob');
 
     // 2. Both derive the same session key
     final aliceKey = await keyExchange.deriveSessionKey(
@@ -52,7 +52,7 @@ void main() {
       createdAt: DateTime.now().millisecondsSinceEpoch,
     );
 
-    final signature = await signing.signMessage(
+    final signature = await signing.sign(
       message: message,
       signingPrivateKey: alice.signingPrivateKey,
       signingPublicKey: alice.signingPublicKey,
@@ -73,7 +73,7 @@ void main() {
     );
 
     // 5. Bob verifies the signature using Alice's public key
-    final verified = await signing.verifyMessage(
+    final verified = await signing.verify(
       message: message,
       signingPublicKey: alice.signingPublicKey,
     );

@@ -76,6 +76,38 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_ble_peripheral:
+    dependency: "direct main"
+    description:
+      name: flutter_ble_peripheral
+      sha256: "351ac796468e24e5cfc28cf9330a7f0fbd17e642f763d538a5d962d0678308cc"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.0"
+  flutter_reactive_ble:
+    dependency: "direct main"
+    description:
+      name: flutter_reactive_ble
+      sha256: "10022aed17fa1797678a4d848cf25484a4cfd10c46061ce61687f071585fe036"
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.4.2"
+  functional_data:
+    dependency: transitive
+    description:
+      name: functional_data
+      sha256: "76d17dc707c40e552014f5a49c0afcc3f1e3f05e800cd6b7872940bfe41a5039"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.0"
+  json_annotation:
+    dependency: transitive
+    description:
+      name: json_annotation
+      sha256: cb09e7dac6210041fad964ed7fbee004f14258b4eca4040f72d1234062ace4c8
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.11.0"
   material_color_utilities:
     dependency: transitive
     description:
@@ -92,6 +124,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.17.0"
+  plugin_platform_interface:
+    dependency: transitive
+    description:
+      name: plugin_platform_interface
+      sha256: "4820fbfdb9478b1ebae27888254d445073732dae3d6ea81f0b7e06d5dedc3f02"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.8"
+  protobuf:
+    dependency: transitive
+    description:
+      name: protobuf
+      sha256: "75ec242d22e950bdcc79ee38dd520ce4ee0bc491d7fadc4ea47694604d22bf06"
+      url: "https://pub.dev"
+    source: hosted
+    version: "6.0.0"
+  reactive_ble_mobile:
+    dependency: transitive
+    description:
+      name: reactive_ble_mobile
+      sha256: ddfc324be406cec06aeace0e85a074cda8d0c01658ef6e5d308764fee4b33b61
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.4.2"
+  reactive_ble_platform_interface:
+    dependency: transitive
+    description:
+      name: reactive_ble_platform_interface
+      sha256: "605fdd7b0538ad3991acae80315110fbf36e742fed21e7a9acc0adf0bf84c577"
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.4.2"
   sky_engine:
     dependency: transitive
     description: flutter
@@ -122,4 +186,5 @@ packages:
     source: hosted
     version: "2.2.0"
 sdks:
-  dart: ">=3.9.0-0 <4.0.0"
+  dart: ">=3.9.0 <4.0.0"
+  flutter: ">=3.10.0"

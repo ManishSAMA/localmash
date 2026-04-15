@@ -6,6 +6,10 @@ import 'package:async/async.dart';
 import 'transport.dart';
 
 class TransportManager {
+  TransportManager([List<Transport>? transports]) {
+    if (transports != null) _transports.addAll(transports);
+  }
+
   final List<Transport> _transports = [];
 
   Stream<PeerEvent> get peerEvents {

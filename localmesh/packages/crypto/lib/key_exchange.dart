@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
+import 'package:domain/domain.dart';
 
-class KeyExchangeService {
+class KeyExchangeService implements SessionKeyDeriver {
   final X25519 _x25519 = X25519();
   final Hkdf _hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
 
@@ -13,6 +14,7 @@ class KeyExchangeService {
   ///   - the same pair of fingerprints (order doesn't matter — sorted internally)
   ///
   /// Returns a 32-byte symmetric key suitable for AES-256-GCM.
+  @override
   Future<List<int>> deriveSessionKey({
     required List<int> myPrivateKey,
     required List<int> theirPublicKey,

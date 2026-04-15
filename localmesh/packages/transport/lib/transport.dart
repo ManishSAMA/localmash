@@ -28,6 +28,14 @@ class TransportPayload {
   final String transportName;
 }
 
+class TransportException implements Exception {
+  TransportException(this.transportName, this.message);
+  final String transportName;
+  final String message;
+  @override
+  String toString() => 'TransportException($transportName): $message';
+}
+
 abstract class Transport {
   String get name;
   Future<void> start();

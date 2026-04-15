@@ -12,8 +12,8 @@ void main() {
     });
 
     test('both peers derive identical session keys', () async {
-      final alice = await identityService.generateIdentity('Alice');
-      final bob = await identityService.generateIdentity('Bob');
+      final alice = await identityService.generate('Alice');
+      final bob = await identityService.generate('Bob');
 
       final aliceSessionKey = await keyExchange.deriveSessionKey(
         myPrivateKey: alice.encryptionPrivateKey,
@@ -34,9 +34,9 @@ void main() {
     });
 
     test('different peer pairs produce different session keys', () async {
-      final alice = await identityService.generateIdentity('Alice');
-      final bob = await identityService.generateIdentity('Bob');
-      final charlie = await identityService.generateIdentity('Charlie');
+      final alice = await identityService.generate('Alice');
+      final bob = await identityService.generate('Bob');
+      final charlie = await identityService.generate('Charlie');
 
       final aliceBobKey = await keyExchange.deriveSessionKey(
         myPrivateKey: alice.encryptionPrivateKey,

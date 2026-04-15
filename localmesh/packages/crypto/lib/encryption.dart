@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
+import 'package:domain/domain.dart';
 
 /// Thrown when decryption fails — wrong key, tampered ciphertext, or
 /// malformed input. Never expose the underlying exception to callers
@@ -13,7 +14,7 @@ class DecryptionFailedException implements Exception {
   String toString() => 'DecryptionFailedException: $message';
 }
 
-class EncryptionService {
+class EncryptionService implements MessageEncryptor {
   static const int _nonceLength = 12;
   static const int _tagLength = 16;
 
@@ -22,6 +23,7 @@ class EncryptionService {
   /// Encrypts plaintext with the given 32-byte session key.
   /// Output format: [12-byte nonce][ciphertext][16-byte tag]
   /// The nonce is randomly generated per call — never reused.
+  @override
   Future<Uint8List> encrypt({
     required List<int> plaintext,
     required List<int> sessionKey,
@@ -57,6 +59,7 @@ class EncryptionService {
 
   /// Decrypts a packed [nonce||ciphertext||tag] blob.
   /// Throws DecryptionFailedException on any failure.
+  @override
   Future<Uint8List> decrypt({
     required List<int> encrypted,
     required List<int> sessionKey,

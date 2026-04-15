@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:domain/domain.dart';
 
-class SigningService {
+class SigningService implements MessageSigner {
   final Ed25519 _ed25519 = Ed25519();
 
   /// Builds the canonical byte sequence that gets signed.
@@ -26,7 +26,8 @@ class SigningService {
 
   /// Signs a message with the sender's Ed25519 private key.
   /// Returns the signature bytes (typically 64 bytes for Ed25519).
-  Future<List<int>> signMessage({
+  @override
+  Future<List<int>> sign({
     required LocalMeshMessage message,
     required List<int> signingPrivateKey,
     required List<int> signingPublicKey,
@@ -45,7 +46,8 @@ class SigningService {
 
   /// Verifies a message's signature against the sender's public key.
   /// Returns true if valid, false otherwise. Never throws on bad signatures.
-  Future<bool> verifyMessage({
+  @override
+  Future<bool> verify({
     required LocalMeshMessage message,
     required List<int> signingPublicKey,
   }) async {
