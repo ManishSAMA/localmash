@@ -46,6 +46,19 @@ class TransportManager {
     }
   }
 
+  List<Transport> get transports => List.unmodifiable(_transports);
+
+  List<String> get connectedPeers {
+    final seen = <String>{};
+    final result = <String>[];
+    for (final t in _transports) {
+      for (final p in t.connectedPeers) {
+        if (seen.add(p)) result.add(p);
+      }
+    }
+    return result;
+  }
+
   void addTransport(Transport transport) {
     _transports.add(transport);
   }

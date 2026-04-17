@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import '../transport.dart';
+import 'ble_peripheral.dart';
 
 // LocalMesh BLE service/characteristic UUIDs — must match across all devices
 const String _serviceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -25,6 +26,7 @@ class BleTransport implements Transport {
 
   StreamSubscription<DiscoveredDevice>? _scanSub;
   final List<StreamSubscription<dynamic>> _connectionSubs = [];
+  final BlePeripheralAdvertiser _advertiser = BlePeripheralAdvertiser();
 
   @override
   String get name => 'ble';
@@ -38,10 +40,11 @@ class BleTransport implements Transport {
   @override
   Stream<TransportPayload> get incomingData => _dataCtrl.stream;
 
-  // NOTE: connectedPeers and hasPeer are internal helpers, NOT part of Transport interface
+  @override
   List<String> get connectedPeers =>
       _peers.entries.where((e) => e.value.isConnected).map((e) => e.key).toList();
 
+  @override
   bool hasPeer(String peerId) => _peers[peerId]?.isConnected ?? false;
 
   @override
@@ -59,6 +62,8 @@ class BleTransport implements Transport {
         _state = TransportState.error;
       },
     );
+    // Start peripheral advertising so other devices can discover us
+    await _advertiser.start(localName: myDeviceName);
     _state = TransportState.running;
   }
 
@@ -142,6 +147,7 @@ class BleTransport implements Transport {
   @override
   Future<void> stop() async {
     _state = TransportState.stopping;
+    await _advertiser.stop();
     await _scanSub?.cancel();
     for (final sub in _connectionSubs) {
       await sub.cancel();

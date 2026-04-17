@@ -45,4 +45,6 @@ abstract class Transport {
   Future<void> sendTo(String peerId, Uint8List data);
   Future<void> broadcast(Uint8List data);
   TransportState get state;
+  List<String> get connectedPeers;
+  bool hasPeer(String peerId);
 }

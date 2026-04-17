@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../providers/providers.dart';
 import 'chat_screen.dart';
+import 'network_health_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -20,7 +21,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final peersAsync = ref.watch(connectedPeersProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('LocalMesh')),
+      appBar: AppBar(
+        title: const Text('LocalMesh'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.network_check),
+            tooltip: 'Network Health',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const NetworkHealthScreen(),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           identityAsync.when(
@@ -108,8 +122,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
       return;
     }
+
     final manager = ref.read(transportManagerProvider);
     await manager.start();
+
+    // Wire the MessageController to the running transport streams
+    final ctrl = await ref.read(messageControllerProvider.future);
+    await ctrl.start();
+
     if (mounted) setState(() => _meshStarted = true);
   }
 

@@ -25,6 +25,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final messagesAsync = ref.watch(chatMessagesProvider(widget.peer.id));
+    // Re-render when a new decrypted message arrives
+    ref.listen(decryptedMessagesProvider, (_, __) {
+      ref.invalidate(chatMessagesProvider(widget.peer.id));
+    });
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.peer.displayName)),
@@ -87,12 +91,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (_controller.text.trim().isEmpty) return;
     setState(() => _sending = true);
     try {
-      final useCase = ref.read(sendMessageProvider);
-      await useCase(
+      final ctrl = ref.read(messageControllerSyncProvider);
+      await ctrl.sendText(
         recipientId: widget.peer.id,
         plaintext: _controller.text.trim(),
       );
-      // TODO (Phase 6): hand message to TransportManager for actual BLE transmission
       _controller.clear();
       ref.invalidate(chatMessagesProvider(widget.peer.id));
     } catch (e) {

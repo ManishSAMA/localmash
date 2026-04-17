@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:domain/domain.dart';
 import 'package:transport/transport_package.dart';
+import '../controllers/message_controller.dart';
 import '../di/service_locator.dart';
 
 // ── Repository providers ──
@@ -24,7 +25,7 @@ final transportManagerProvider = Provider<TransportManager>(
   (ref) => getIt<TransportManager>(),
 );
 
-// NOT autoDispose — losing this drops the mesh connection
+// NOT autoDispose — losing these drops the mesh connection
 final peerEventsProvider = StreamProvider<PeerEvent>(
   (ref) => ref.read(transportManagerProvider).peerEvents,
 );
@@ -47,6 +48,24 @@ final chatMessagesProvider =
   (ref, peerId) async {
     ref.watch(incomingDataProvider); // refresh on incoming message
     return ref.read(messageRepoProvider).getMessagesForChat(peerId);
+  },
+);
+
+// ── MessageController ──
+final messageControllerProvider = FutureProvider<MessageController>(
+  (ref) => getIt.getAsync<MessageController>(),
+);
+
+// Convenience sync accessor — only safe after MessageController is resolved
+final messageControllerSyncProvider = Provider<MessageController>(
+  (ref) => getIt<MessageController>(),
+);
+
+// ── Decrypted message stream — triggers chat UI updates ──
+final decryptedMessagesProvider = StreamProvider<DecryptedMessage>(
+  (ref) {
+    final ctrl = ref.watch(messageControllerSyncProvider);
+    return ctrl.decryptedMessages;
   },
 );
 
