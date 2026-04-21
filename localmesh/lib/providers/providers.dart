@@ -37,7 +37,8 @@ final incomingDataProvider = StreamProvider<TransportPayload>(
 // ── Connected peer list ──
 final connectedPeersProvider = FutureProvider<List<Peer>>(
   (ref) async {
-    ref.watch(peerEventsProvider); // re-evaluate on every peer event
+    ref.watch(peerEventsProvider); // refresh fast on transport connect/disconnect
+    ref.watch(peerRepositoryRevisionProvider); // refresh after repo writes complete
     return ref.read(peerRepoProvider).getConnectedPeers();
   },
 );
@@ -46,7 +47,8 @@ final connectedPeersProvider = FutureProvider<List<Peer>>(
 final chatMessagesProvider =
     FutureProvider.family<List<LocalMeshMessage>, String>(
   (ref, peerId) async {
-    ref.watch(incomingDataProvider); // refresh on incoming message
+    ref.watch(incomingDataProvider); // refresh fast on transport data
+    ref.watch(messageRepositoryRevisionProvider); // refresh after repo writes complete
     return ref.read(messageRepoProvider).getMessagesForChat(peerId);
   },
 );
@@ -61,11 +63,25 @@ final messageControllerSyncProvider = Provider<MessageController>(
   (ref) => getIt<MessageController>(),
 );
 
+final peerRepositoryRevisionProvider = StreamProvider<int>(
+  (ref) async* {
+    final ctrl = await getIt.getAsync<MessageController>();
+    yield* ctrl.peerRevisions;
+  },
+);
+
+final messageRepositoryRevisionProvider = StreamProvider<int>(
+  (ref) async* {
+    final ctrl = await getIt.getAsync<MessageController>();
+    yield* ctrl.messageRevisions;
+  },
+);
+
 // ── Decrypted message stream — triggers chat UI updates ──
 final decryptedMessagesProvider = StreamProvider<DecryptedMessage>(
-  (ref) {
-    final ctrl = ref.watch(messageControllerSyncProvider);
-    return ctrl.decryptedMessages;
+  (ref) async* {
+    final ctrl = await getIt.getAsync<MessageController>();
+    yield* ctrl.decryptedMessages;
   },
 );
 

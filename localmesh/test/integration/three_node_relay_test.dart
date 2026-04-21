@@ -256,6 +256,7 @@ Future<_Node> _buildNode(String name) async {
     peerRepo: peerRepo,
     identityRepo: identityRepo,
     signer: signer,
+    identityGenerator: _FakeIdentityGenerator(),
   );
   await controller.start();
 

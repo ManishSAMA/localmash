@@ -97,5 +97,6 @@ Future<void> setupServiceLocator() async {
         peerRepo: getIt<PeerRepository>(),
         identityRepo: getIt<IdentityRepository>(),
         signer: getIt<MessageSigner>(),
+        identityGenerator: getIt<IdentityGenerator>(),
       ));
 }

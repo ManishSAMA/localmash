@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:async/async.dart';
+import 'package:flutter/foundation.dart';
 
 import 'transport.dart';
 
@@ -35,9 +35,29 @@ class TransportManager {
   }
 
   Future<void> sendTo(String peerId, Uint8List data) async {
+    var attempted = false;
+    var succeeded = false;
+    Object? lastError;
+
     for (final transport in _transports) {
-      await transport.sendTo(peerId, data);
+      if (!transport.hasPeer(peerId)) continue;
+      attempted = true;
+      try {
+        await transport.sendTo(peerId, data);
+        succeeded = true;
+      } catch (e) {
+        lastError = e;
+        debugPrint(
+          '[TRANSPORT][MANAGER] sendTo failed via ${transport.name} for $peerId: $e',
+        );
+      }
     }
+
+    if (succeeded) return;
+    if (attempted && lastError != null) {
+      throw TransportException('manager', 'All transports failed for $peerId: $lastError');
+    }
+    throw TransportException('manager', 'No connected transport for peer $peerId');
   }
 
   Future<void> broadcast(Uint8List data) async {

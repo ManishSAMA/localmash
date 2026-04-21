@@ -25,9 +25,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final messagesAsync = ref.watch(chatMessagesProvider(widget.peer.id));
-    // Re-render when a new decrypted message arrives
-    ref.listen(decryptedMessagesProvider, (_, __) {
-      ref.invalidate(chatMessagesProvider(widget.peer.id));
+    final messageController = ref.watch(messageControllerSyncProvider);
+
+    ref.listen(decryptedMessagesProvider, (_, next) {
+      next.whenData((dm) {
+        final isForThisChat = dm.envelope.senderId == widget.peer.id ||
+            dm.envelope.recipientId == widget.peer.id;
+        if (isForThisChat && mounted) {
+          ref.invalidate(chatMessagesProvider(widget.peer.id));
+        }
+      });
     });
 
     return Scaffold(
@@ -45,11 +52,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       itemCount: messages.length,
                       itemBuilder: (context, i) {
                         final m = messages[messages.length - 1 - i];
+                        final plaintext = messageController.cachedPlaintextFor(m.id);
                         return ListTile(
-                          title: Text(
-                            '[hops: ${m.hopCount}] ${m.id.substring(0, 8)}...',
+                          title: Text(plaintext ?? '[message not yet decrypted]'),
+                          subtitle: Text(
+                            '${m.senderId.substring(0, 8)}  •  '
+                            '${DateTime.fromMillisecondsSinceEpoch(m.createdAt).toLocal()}',
                           ),
-                          subtitle: Text('Lamport ts: ${m.lamportTs}'),
                         );
                       },
                     ),
@@ -90,11 +99,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send() async {
     if (_controller.text.trim().isEmpty) return;
     setState(() => _sending = true);
+    final text = _controller.text.trim();
     try {
       final ctrl = ref.read(messageControllerSyncProvider);
       await ctrl.sendText(
         recipientId: widget.peer.id,
-        plaintext: _controller.text.trim(),
+        plaintext: text,
       );
       _controller.clear();
       ref.invalidate(chatMessagesProvider(widget.peer.id));

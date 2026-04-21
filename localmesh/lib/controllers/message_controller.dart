@@ -22,13 +22,15 @@ class MessageController {
     required PeerRepository peerRepo,
     required IdentityRepository identityRepo,
     required MessageSigner signer,
+    required IdentityGenerator identityGenerator,
   })  : _transportManager = transportManager,
         _receiveMessage = receiveMessage,
         _sendMessage = sendMessage,
         _syncHistory = syncHistory,
         _peerRepo = peerRepo,
         _identityRepo = identityRepo,
-        _signer = signer;
+        _signer = signer,
+        _identityGenerator = identityGenerator;
 
   final TransportManager _transportManager;
   final ReceiveMessage _receiveMessage;
@@ -37,20 +39,38 @@ class MessageController {
   final PeerRepository _peerRepo;
   final IdentityRepository _identityRepo;
   final MessageSigner _signer;
+  final IdentityGenerator _identityGenerator;
 
   StreamSubscription<TransportPayload>? _dataSub;
   StreamSubscription<PeerEvent>? _peerSub;
+  bool _started = false;
 
   final StreamController<DecryptedMessage> _decryptedCtrl =
       StreamController<DecryptedMessage>.broadcast();
+  final StreamController<int> _peerRevisionCtrl =
+      StreamController<int>.broadcast();
+  final StreamController<int> _messageRevisionCtrl =
+      StreamController<int>.broadcast();
+  final Map<String, String> _plaintextCache = {};
+  final Map<String, String> _transportPeerToIdentity = {};
+  final Map<String, String> _identityToTransportPeer = {};
+  final Set<String> _pendingConnectedTransportPeers = <String>{};
+  int _peerRevision = 0;
+  int _messageRevision = 0;
 
   /// Stream of successfully decrypted messages for UI consumption.
   Stream<DecryptedMessage> get decryptedMessages => _decryptedCtrl.stream;
+  Stream<int> get peerRevisions => _peerRevisionCtrl.stream;
+  Stream<int> get messageRevisions => _messageRevisionCtrl.stream;
+
+  String? cachedPlaintextFor(String messageId) => _plaintextCache[messageId];
 
   /// Start listening to transport streams. Call after TransportManager.start().
   Future<void> start() async {
+    if (_started) return;
     _dataSub = _transportManager.incomingData.listen(_handleIncoming);
     _peerSub = _transportManager.peerEvents.listen(_handlePeerEvent);
+    _started = true;
   }
 
   Future<void> stop() async {
@@ -58,6 +78,7 @@ class MessageController {
     await _peerSub?.cancel();
     _dataSub = null;
     _peerSub = null;
+    _started = false;
   }
 
   // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -72,8 +93,10 @@ class MessageController {
       recipientId: recipientId,
       plaintext: plaintext,
     );
+    _plaintextCache[msg.id] = plaintext;
     final wire = WireCodec.encode(msg);
     await _transportManager.broadcast(wire);
+    _emitMessageRevision();
     return msg;
   }
 
@@ -99,7 +122,7 @@ class MessageController {
       return;
     }
     if (msg.type == MessageType.peerAnnounce) {
-      await _handlePeerAnnounce(msg);
+      await _handlePeerAnnounce(msg, payload.fromPeerId);
       // Announces also flow through router for potential forwarding
     }
 
@@ -107,8 +130,15 @@ class MessageController {
 
     // Only surface TEXT messages to the UI; control-plane messages
     // (PEER_ANNOUNCE, sync, etc.) are handled above and must not reach the stream.
-    if (result.decrypted != null && msg.type == MessageType.text) {
-      _decryptedCtrl.add(result.decrypted!);
+    final deliveredLocally =
+        result.decision.action == RouterAction.deliverOnly ||
+            result.decision.action == RouterAction.deliverAndForward;
+    if (deliveredLocally && msg.type == MessageType.text) {
+      if (result.decrypted != null) {
+        _plaintextCache[msg.id] = result.decrypted!.plaintext;
+        _decryptedCtrl.add(result.decrypted!);
+      }
+      _emitMessageRevision();
     }
 
     // Forward if the router decided so
@@ -120,8 +150,10 @@ class MessageController {
         if (peer == payload.fromPeerId) continue;
         try {
           await _transportManager.sendTo(peer, wire);
-        } catch (_) {
-          // best-effort
+        } catch (e) {
+          debugPrint(
+            '[TRANSPORT][BLE] forward to $peer failed for message ${forwarded.id}: $e',
+          );
         }
       }
     }
@@ -130,7 +162,21 @@ class MessageController {
   // ── Peer events ───────────────────────────────────────────────────────────
 
   Future<void> _handlePeerEvent(PeerEvent event) async {
-    await _peerRepo.updatePeerConnectionStatus(event.peerId, event.connected);
+    final resolvedPeerId = _transportPeerToIdentity[event.peerId] ?? event.peerId;
+    await _peerRepo.updatePeerConnectionStatus(resolvedPeerId, event.connected);
+
+    if (event.connected) {
+      _pendingConnectedTransportPeers.add(event.peerId);
+    } else {
+      _pendingConnectedTransportPeers.remove(event.peerId);
+      final identityPeerId = _transportPeerToIdentity.remove(event.peerId);
+      if (identityPeerId != null) {
+        _identityToTransportPeer.remove(identityPeerId);
+        await _peerRepo.updatePeerConnectionStatus(identityPeerId, false);
+      }
+    }
+
+    _emitPeerRevision();
 
     if (event.connected) {
       await _sendPeerAnnounceTo(event.peerId);
@@ -174,15 +220,39 @@ class MessageController {
 
     try {
       await _transportManager.sendTo(peerId, WireCodec.encode(msg));
-    } catch (_) {}
+      debugPrint('[TRANSPORT][BLE] peer announce sent to $peerId');
+    } catch (e) {
+      debugPrint('[TRANSPORT][BLE] peer announce failed for $peerId: $e');
+    }
   }
 
-  Future<void> _handlePeerAnnounce(LocalMeshMessage msg) async {
+  Future<void> _handlePeerAnnounce(
+    LocalMeshMessage msg,
+    String transportPeerId,
+  ) async {
     if (msg.payload.length < 64) return;
     try {
       final sigPub = List<int>.from(msg.payload.sublist(0, 32));
       final encPub = List<int>.from(msg.payload.sublist(32, 64));
       final name = utf8.decode(msg.payload.sublist(64));
+      final computedFingerprint =
+          await _identityGenerator.computeFingerprint(sigPub);
+      if (computedFingerprint != msg.senderId) {
+        debugPrint(
+          'MessageController: rejecting PEER_ANNOUNCE with mismatched fingerprint',
+        );
+        return;
+      }
+
+      final existingPeer = await _peerRepo.getPeerById(msg.senderId);
+      if (existingPeer != null &&
+          (!listEquals(existingPeer.signingPublicKey, sigPub) ||
+              !listEquals(existingPeer.encryptionPublicKey, encPub))) {
+        debugPrint(
+          'MessageController: rejecting PEER_ANNOUNCE that changes trusted keys for ${msg.senderId}',
+        );
+        return;
+      }
 
       final peer = Peer(
         id: msg.senderId,
@@ -190,10 +260,16 @@ class MessageController {
         signingPublicKey: sigPub,
         encryptionPublicKey: encPub,
         lastSeen: DateTime.now().millisecondsSinceEpoch,
-        isConnected: true,
+        isConnected: _pendingConnectedTransportPeers.contains(transportPeerId),
         isTrusted: true, // TOFU — trust on first use
       );
       await _peerRepo.savePeer(peer);
+      _transportPeerToIdentity[transportPeerId] = msg.senderId;
+      _identityToTransportPeer[msg.senderId] = transportPeerId;
+      if (_pendingConnectedTransportPeers.contains(transportPeerId)) {
+        await _peerRepo.updatePeerConnectionStatus(msg.senderId, true);
+      }
+      _emitPeerRevision();
     } catch (e) {
       debugPrint('MessageController: bad PEER_ANNOUNCE — $e');
     }
@@ -236,7 +312,10 @@ class MessageController {
 
     try {
       await _transportManager.sendTo(peerId, WireCodec.encode(msg));
-    } catch (_) {}
+      debugPrint('[TRANSPORT][BLE] sync request sent to $peerId');
+    } catch (e) {
+      debugPrint('[TRANSPORT][BLE] sync request failed for $peerId: $e');
+    }
   }
 
   Future<void> _handleSyncRequest(
@@ -253,7 +332,14 @@ class MessageController {
       for (final m in response.messages) {
         try {
           await _transportManager.sendTo(fromPeerId, WireCodec.encode(m));
-        } catch (_) {}
+          debugPrint(
+            '[TRANSPORT][BLE] sync response message ${m.id} sent to $fromPeerId',
+          );
+        } catch (e) {
+          debugPrint(
+            '[TRANSPORT][BLE] sync response message ${m.id} failed for $fromPeerId: $e',
+          );
+        }
       }
     } catch (e) {
       debugPrint('MessageController: bad SYNC_REQUEST — $e');
@@ -263,5 +349,17 @@ class MessageController {
   Future<void> dispose() async {
     await stop();
     await _decryptedCtrl.close();
+    await _peerRevisionCtrl.close();
+    await _messageRevisionCtrl.close();
+  }
+
+  void _emitPeerRevision() {
+    _peerRevision++;
+    _peerRevisionCtrl.add(_peerRevision);
+  }
+
+  void _emitMessageRevision() {
+    _messageRevision++;
+    _messageRevisionCtrl.add(_messageRevision);
   }
 }

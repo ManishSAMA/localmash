@@ -16,4 +16,7 @@ dependencies:
     path: ../crypto
   async: ^2.11.0
   flutter_reactive_ble: ^5.3.2
-  flutter_ble_peripheral: ^2.1.0
+  # Bug 4: flutter_ble_peripheral removed — peripheral role is handled natively by
+  # LocalMeshBleGattServer.kt via platform channels.  The unused package was merging
+  # extra AndroidManifest permissions and registering a native plugin that can interfere
+  # with BLE stack init on some devices.

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../providers/providers.dart';
 import 'chat_screen.dart';
+import 'identity_setup_screen.dart';
 import 'network_health_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -14,6 +15,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _meshStarted = false;
+  bool _meshStarting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -48,10 +50,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             data: (id) => Card(
               margin: const EdgeInsets.all(16),
-              child: ListTile(
-                title: Text(id?.displayName ?? 'No identity'),
-                subtitle: Text('Fingerprint: ${id?.fingerprint ?? '-'}'),
-              ),
+              child: id == null
+                  ? ListTile(
+                      leading: const Icon(Icons.person_add_alt_1),
+                      title: const Text('No identity yet'),
+                      subtitle: const Text(
+                        'Create identity first, then start mesh and chat.',
+                      ),
+                      trailing: FilledButton(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const IdentitySetupScreen(),
+                          ),
+                        ),
+                        child: const Text('Create'),
+                      ),
+                    )
+                  : ListTile(
+                      title: Text(id.displayName),
+                      subtitle: Text('Fingerprint: ${id.fingerprint}'),
+                    ),
             ),
           ),
           if (!_meshStarted)
@@ -59,8 +77,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               padding: const EdgeInsets.all(16),
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.bluetooth_searching),
-                label: const Text('Start Mesh'),
-                onPressed: _startMesh,
+                label: Text(_meshStarting ? 'Starting Mesh...' : 'Start Mesh'),
+                onPressed: identityAsync.value == null || _meshStarting
+                    ? null
+                    : _startMesh,
               ),
             )
           else
@@ -112,6 +132,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _startMesh() async {
+    if (_meshStarted || _meshStarting) return;
+    if (mounted) setState(() => _meshStarting = true);
+
     final granted = await _requestPermissions();
     if (!granted) {
       if (mounted) {
@@ -120,17 +143,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               content: Text('Permissions required for mesh networking')),
         );
       }
+      if (mounted) setState(() => _meshStarting = false);
       return;
     }
 
-    final manager = ref.read(transportManagerProvider);
-    await manager.start();
+    try {
+      final manager = ref.read(transportManagerProvider);
+      await manager.start();
 
-    // Wire the MessageController to the running transport streams
-    final ctrl = await ref.read(messageControllerProvider.future);
-    await ctrl.start();
+      final ctrl = await ref.read(messageControllerProvider.future);
+      await ctrl.start();
 
-    if (mounted) setState(() => _meshStarted = true);
+      if (mounted) {
+        setState(() {
+          _meshStarted = true;
+          _meshStarting = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _meshStarting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start mesh: $e')),
+        );
+      }
+    }
   }
 
   Future<bool> _requestPermissions() async {
@@ -139,6 +176,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       Permission.bluetoothConnect,
       Permission.bluetoothAdvertise,
       Permission.locationWhenInUse,
+      // Bug 5: WifiDirectTransport requires NEARBY_WIFI_DEVICES at runtime on Android 12+;
+      // without it WifiP2pManager operations throw SecurityException.
+      Permission.nearbyWifiDevices,
     ].request();
     return results.values.every((s) => s.isGranted);
   }
