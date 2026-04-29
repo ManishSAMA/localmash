@@ -152,7 +152,7 @@ class MessageController {
           await _transportManager.sendTo(peer, wire);
         } catch (e) {
           debugPrint(
-            '[TRANSPORT][BLE] forward to $peer failed for message ${forwarded.id}: $e',
+            '[CONTROLLER] forward to $peer failed for message ${forwarded.id}: $e',
           );
         }
       }
@@ -220,9 +220,9 @@ class MessageController {
 
     try {
       await _transportManager.sendTo(peerId, WireCodec.encode(msg));
-      debugPrint('[TRANSPORT][BLE] peer announce sent to $peerId');
+      debugPrint('[CONTROLLER] peer announce sent to $peerId');
     } catch (e) {
-      debugPrint('[TRANSPORT][BLE] peer announce failed for $peerId: $e');
+      debugPrint('[CONTROLLER] peer announce failed for $peerId: $e');
     }
   }
 
@@ -312,9 +312,9 @@ class MessageController {
 
     try {
       await _transportManager.sendTo(peerId, WireCodec.encode(msg));
-      debugPrint('[TRANSPORT][BLE] sync request sent to $peerId');
+      debugPrint('[CONTROLLER] sync request sent to $peerId');
     } catch (e) {
-      debugPrint('[TRANSPORT][BLE] sync request failed for $peerId: $e');
+      debugPrint('[CONTROLLER] sync request failed for $peerId: $e');
     }
   }
 
@@ -333,11 +333,11 @@ class MessageController {
         try {
           await _transportManager.sendTo(fromPeerId, WireCodec.encode(m));
           debugPrint(
-            '[TRANSPORT][BLE] sync response message ${m.id} sent to $fromPeerId',
+            '[CONTROLLER] sync response message ${m.id} sent to $fromPeerId',
           );
         } catch (e) {
           debugPrint(
-            '[TRANSPORT][BLE] sync response message ${m.id} failed for $fromPeerId: $e',
+            '[CONTROLLER] sync response message ${m.id} failed for $fromPeerId: $e',
           );
         }
       }

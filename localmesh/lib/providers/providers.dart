@@ -93,3 +93,8 @@ final createIdentityProvider = Provider<CreateIdentity>(
 final sendMessageProvider = Provider<SendMessage>(
   (ref) => getIt<SendMessage>(),
 );
+
+// ── Async transport errors (e.g. BLE advertise failure after start()) ──
+final transportErrorsProvider = StreamProvider<String>(
+  (ref) => ref.read(transportManagerProvider).transportErrors,
+);

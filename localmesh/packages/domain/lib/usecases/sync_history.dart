@@ -37,7 +37,7 @@ class SyncHistory {
       final newer = await _messageRepo.getMessagesForChat(
         entry.key,
         afterLamportTs: entry.value,
-        limit: 1000,
+        limit: 50,
       );
       allMessages.addAll(newer);
     }

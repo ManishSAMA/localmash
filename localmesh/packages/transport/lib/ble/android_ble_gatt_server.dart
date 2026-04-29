@@ -13,12 +13,18 @@ class AndroidBleGattServer {
             Map<Object?, Object?>.from(event as Map),
           ));
 
-  Future<bool> start({required String localName}) async {
-    return await _methodChannel.invokeMethod<bool>(
-          'start',
-          <String, Object?>{'localName': localName},
-        ) ??
-        false;
+  Future<StartResult> start({required String localName}) async {
+    final raw = await _methodChannel.invokeMethod<Map<Object?, Object?>>(
+      'start',
+      <String, Object?>{'localName': localName},
+    );
+    if (raw == null) {
+      return const StartResult(success: false, error: 'No response from native');
+    }
+    return StartResult(
+      success: (raw['success'] as bool?) ?? false,
+      error: raw['error'] as String?,
+    );
   }
 
   Future<void> stop() async {
@@ -32,6 +38,12 @@ class AndroidBleGattServer {
         ) ??
         false;
   }
+}
+
+class StartResult {
+  const StartResult({required this.success, this.error});
+  final bool success;
+  final String? error;
 }
 
 class BleGattServerEvent {

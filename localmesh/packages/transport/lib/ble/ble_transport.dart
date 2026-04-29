@@ -31,6 +31,8 @@ class BleTransport implements Transport {
   final List<StreamSubscription<dynamic>> _connectionSubs = [];
   final AndroidBleGattServer _gattServer = AndroidBleGattServer();
   final Map<String, _BleFrameBuffer> _frameBuffers = {};
+  final StreamController<String> _errorCtrl =
+      StreamController<String>.broadcast();
 
   @override
   String get name => 'ble';
@@ -51,18 +53,34 @@ class BleTransport implements Transport {
   @override
   bool hasPeer(String peerId) => _peers[peerId]?.isConnected ?? false;
 
+  Stream<String> get transportErrors => _errorCtrl.stream;
+
   @override
   Future<void> start() async {
     _state = TransportState.starting;
     debugPrint('[TRANSPORT][BLE] starting transport for "$myDeviceName"');
+
+    // Pre-check: wait for a definitive BLE status before hitting native.
+    // Skips BleStatus.unknown which can appear briefly at app startup.
+    final bleStatus = await _ble.statusStream
+        .firstWhere((s) => s != BleStatus.unknown)
+        .timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => BleStatus.unknown,
+        );
+    if (bleStatus != BleStatus.ready) {
+      _state = TransportState.error;
+      throw TransportException('ble', _bleStatusMessage(bleStatus));
+    }
+
     _gattServerSub = _gattServer.events.listen(_handleGattServerEvent);
     debugPrint('[TRANSPORT][BLE] starting Android GATT server + advertising');
-    final gattStarted = await _gattServer.start(localName: myDeviceName);
-    if (!gattStarted) {
+    final result = await _gattServer.start(localName: myDeviceName);
+    if (!result.success) {
       _state = TransportState.error;
       throw TransportException(
         'ble',
-        'Failed to start Android GATT server/advertising',
+        result.error ?? 'Failed to start Android GATT server/advertising',
       );
     }
     debugPrint(
@@ -263,7 +281,9 @@ class BleTransport implements Transport {
     }
     if (event.type == 'advertiseError') {
       _state = TransportState.error;
-      debugPrint('[TRANSPORT][BLE] advertising failed (${event.message}) — transport set to error');
+      final msg = 'BLE advertising failed (${event.message}) — mesh unavailable';
+      debugPrint('[TRANSPORT][BLE] $msg');
+      _errorCtrl.add(msg);
       return;
     }
 
@@ -350,6 +370,21 @@ class BleTransport implements Transport {
         transportName: 'ble',
       ));
       debugPrint('[TRANSPORT][BLE] peer ${peer.deviceId} disconnected ($reason)');
+    }
+  }
+
+  String _bleStatusMessage(BleStatus status) {
+    switch (status) {
+      case BleStatus.poweredOff:
+        return 'Bluetooth is off — please enable it and try again';
+      case BleStatus.unauthorized:
+        return 'Bluetooth permission denied — grant permissions in Settings';
+      case BleStatus.unsupported:
+        return 'BLE not supported on this device';
+      case BleStatus.locationServicesDisabled:
+        return 'Location services required for BLE — please enable location';
+      default:
+        return 'Bluetooth not ready ($status) — please check Bluetooth settings';
     }
   }
 

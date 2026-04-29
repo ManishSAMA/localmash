@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:async/async.dart';
 import 'package:flutter/foundation.dart';
 
+import 'ble/ble_transport.dart';
 import 'transport.dart';
 
 class TransportManager {
@@ -77,6 +78,11 @@ class TransportManager {
       }
     }
     return result;
+  }
+
+  Stream<String> get transportErrors {
+    final ble = _transports.whereType<BleTransport>().firstOrNull;
+    return ble?.transportErrors ?? const Stream.empty();
   }
 
   void addTransport(Transport transport) {

@@ -22,6 +22,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final identityAsync = ref.watch(currentIdentityProvider);
     final peersAsync = ref.watch(connectedPeersProvider);
 
+    ref.listen<AsyncValue<String>>(transportErrorsProvider, (_, next) {
+      next.whenData((msg) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Mesh error: $msg'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 6),
+        ));
+        setState(() => _meshStarted = false);
+      });
+    });
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('LocalMesh'),
@@ -171,15 +183,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<bool> _requestPermissions() async {
-    final results = await [
+    // BLE permissions are required — mesh cannot start without them.
+    final bleResults = await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.bluetoothAdvertise,
       Permission.locationWhenInUse,
-      // Bug 5: WifiDirectTransport requires NEARBY_WIFI_DEVICES at runtime on Android 12+;
-      // without it WifiP2pManager operations throw SecurityException.
-      Permission.nearbyWifiDevices,
     ].request();
-    return results.values.every((s) => s.isGranted);
+    if (!bleResults.values.every((s) => s.isGranted)) return false;
+
+    // Wi-Fi Direct permission is optional — WifiDirectTransport is not yet active,
+    // but request it now so the user is prompted once rather than on first use.
+    await Permission.nearbyWifiDevices.request();
+    return true;
   }
 }

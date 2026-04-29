@@ -19,8 +19,8 @@ import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Handler   // Bug 2: needed for main-thread dispatch
-import android.os.Looper   // Bug 2: needed for main-thread dispatch
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.BinaryMessenger
@@ -28,6 +28,8 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 class LocalMeshBleGattServer(private val context: Context) :
     MethodChannel.MethodCallHandler,
@@ -49,7 +51,7 @@ class LocalMeshBleGattServer(private val context: Context) :
     private val advertiser: BluetoothLeAdvertiser?
         get() = adapter?.bluetoothLeAdvertiser
 
-    // Bug 2: all EventSink.success() calls must run on the Android main thread;
+    // All EventSink.success() calls must run on the Android main thread;
     // BluetoothGattServerCallback fires on the Binder thread pool.
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -59,6 +61,12 @@ class LocalMeshBleGattServer(private val context: Context) :
     private val connectedDevices = linkedMapOf<String, BluetoothDevice>()
     private val subscribedDevices = linkedSetOf<String>()
     private var eventSink: EventChannel.EventSink? = null
+
+    // Stores the human-readable reason for the last start() failure.
+    private var lastStartError: String? = null
+
+    // Bridges the async onServiceAdded() callback into openGattServer().
+    private var serviceAddedFuture: CompletableFuture<Boolean>? = null
 
     fun attach(binaryMessenger: BinaryMessenger) {
         MethodChannel(binaryMessenger, METHOD_CHANNEL).setMethodCallHandler(this)
@@ -99,30 +107,44 @@ class LocalMeshBleGattServer(private val context: Context) :
         }
     }
 
-    private fun start(localName: String): Boolean {
+    // Returns a Map<String, Any?> so the Dart side can show a specific failure reason.
+    // {"success": true, "error": null} on success.
+    // {"success": false, "error": "<reason>"} on failure.
+    private fun start(localName: String): Map<String, Any?> {
+        lastStartError = null
+
         if (!hasRequiredPermissions()) {
-            emitLog("cannot start GATT server: missing Bluetooth permissions")
-            return false
+            val msg = "Missing Bluetooth permissions (BLUETOOTH_CONNECT or BLUETOOTH_ADVERTISE)"
+            emitLog("cannot start GATT server: $msg")
+            return mapOf("success" to false, "error" to msg)
         }
         if (adapter == null || adapter?.isEnabled != true) {
-            emitLog("cannot start GATT server: Bluetooth is disabled")
-            return false
+            val msg = "Bluetooth is disabled — please enable Bluetooth and try again"
+            emitLog("cannot start GATT server: $msg")
+            return mapOf("success" to false, "error" to msg)
         }
         if (advertiser == null) {
-            emitLog("cannot start GATT server: BLE advertiser unavailable")
-            return false
+            val msg = "BLE advertising not supported on this device"
+            emitLog("cannot start GATT server: $msg")
+            return mapOf("success" to false, "error" to msg)
         }
 
         stop()
+
         if (!openGattServer()) {
-            return false
+            return mapOf("success" to false, "error" to (lastStartError ?: "Failed to open GATT server"))
         }
-        return startAdvertising(localName)
+        if (!startAdvertising(localName)) {
+            return mapOf("success" to false, "error" to (lastStartError ?: "Failed to start BLE advertising"))
+        }
+        return mapOf("success" to true, "error" to null)
     }
 
     private fun stop() {
         advertiseCallback?.let { advertiser?.stopAdvertising(it) }
         advertiseCallback = null
+        serviceAddedFuture?.cancel(true)
+        serviceAddedFuture = null
         gattServer?.close()
         gattServer = null
         rxCharacteristic = null
@@ -160,15 +182,43 @@ class LocalMeshBleGattServer(private val context: Context) :
 
         val server = bluetoothManager.openGattServer(context, gattServerCallback)
         if (server == null) {
+            lastStartError = "bluetoothManager.openGattServer() returned null"
             emitLog("failed to open Android BluetoothGattServer")
             return false
         }
-        val added = server.addService(service)
+
+        // Prepare the future BEFORE addService() to avoid a race where onServiceAdded
+        // fires before the field is assigned.
+        val future = CompletableFuture<Boolean>()
+        serviceAddedFuture = future
+
+        val queued = server.addService(service)
+        if (!queued) {
+            lastStartError = "server.addService() returned false for $SERVICE_UUID"
+            emitLog("failed to enqueue GATT service $SERVICE_UUID")
+            server.close()
+            serviceAddedFuture = null
+            return false
+        }
+
+        // Block until onServiceAdded() confirms (or 3s timeout as safety valve).
+        // This runs on the Flutter method-channel background thread — safe to block.
+        val added = try {
+            future.get(3, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            lastStartError = "onServiceAdded timed out or threw: ${e.message}"
+            emitLog("onServiceAdded timed out: ${e.message}")
+            false
+        } finally {
+            serviceAddedFuture = null
+        }
+
         if (!added) {
-            emitLog("failed to add GATT service $SERVICE_UUID")
+            lastStartError = lastStartError ?: "GATT service registration failed in onServiceAdded"
             server.close()
             return false
         }
+
         gattServer = server
         emitLog("GATT service $SERVICE_UUID registered")
         return true
@@ -184,9 +234,7 @@ class LocalMeshBleGattServer(private val context: Context) :
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
             .build()
 
-        // Bug 1: primary ad packet was 32 B (flags 3 + UUID 18 + name 11) > 31 B limit,
-        // causing ADVERTISE_FAILED_DATA_TOO_LARGE.  Move device name to scan response so
-        // each packet stays within the 31-byte budget.
+        // Primary ad packet: service UUID only (device name in scan response to stay under 31B).
         val primaryData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(SERVICE_UUID)))
             .setIncludeTxPowerLevel(false)
@@ -199,37 +247,33 @@ class LocalMeshBleGattServer(private val context: Context) :
         val callback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
                 emitLog("BLE advertising started for $SERVICE_UUID")
-                // Bug 3: emit dedicated event so Dart side knows advertising truly started.
                 emitAdvertiseResult(success = true)
             }
 
             override fun onStartFailure(errorCode: Int) {
+                lastStartError = "BLE advertising failed with errorCode=$errorCode"
                 emitLog("BLE advertising failed with code=$errorCode")
-                // Bug 3: propagate failure to Dart so BleTransport can set state = error.
                 emitAdvertiseResult(success = false, errorCode = errorCode)
             }
         }
 
         return try {
-            // Bug 1: use 4-arg overload with separate scan-response packet.
             advertiser?.startAdvertising(settings, primaryData, scanResponse, callback)
             advertiseCallback = callback
             true
         } catch (t: Throwable) {
+            lastStartError = "startAdvertising threw: ${t.message}"
             emitLog("BLE advertising threw ${t.message}")
             false
         }
     }
 
-    // Bug 3: emit advertiseStarted / advertiseError through the event channel so Dart
-    // can react to the real async outcome of startAdvertising().
     private fun emitAdvertiseResult(success: Boolean, errorCode: Int = 0) {
         mainHandler.post {
             eventSink?.success(
                 mapOf(
                     "type" to if (success) "advertiseStarted" else "advertiseError",
                     "peerId" to "",
-                    // Reuse the "message" field so BleGattServerEvent.fromMap needs no changes.
                     "message" to "errorCode=$errorCode",
                 )
             )
@@ -255,6 +299,12 @@ class LocalMeshBleGattServer(private val context: Context) :
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
+        override fun onServiceAdded(status: Int, service: BluetoothGattService?) {
+            val success = (status == BluetoothGatt.GATT_SUCCESS)
+            emitLog("onServiceAdded status=$status success=$success")
+            serviceAddedFuture?.complete(success)
+        }
+
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             val peerId = device.address
             when (newState) {
@@ -313,9 +363,6 @@ class LocalMeshBleGattServer(private val context: Context) :
         }
     }
 
-    // Bug 2: EventSink.success() must be called from the Android main thread.
-    // BluetoothGattServerCallback fires on the Binder thread pool, so all eventSink
-    // calls are posted via mainHandler.  gattServer.sendResponse() stays on Binder thread.
     private fun emitPeerEvent(type: String, device: BluetoothDevice) {
         mainHandler.post {
             eventSink?.success(
