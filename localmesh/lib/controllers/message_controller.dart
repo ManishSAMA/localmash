@@ -58,6 +58,8 @@ class MessageController {
   int _peerRevision = 0;
   int _messageRevision = 0;
 
+  static const int _kPlaintextCacheMax = 1000;
+
   /// Stream of successfully decrypted messages for UI consumption.
   Stream<DecryptedMessage> get decryptedMessages => _decryptedCtrl.stream;
   Stream<int> get peerRevisions => _peerRevisionCtrl.stream;
@@ -93,7 +95,7 @@ class MessageController {
       recipientId: recipientId,
       plaintext: plaintext,
     );
-    _plaintextCache[msg.id] = plaintext;
+    _cachePlaintext(msg.id, plaintext);
     final wire = WireCodec.encode(msg);
     await _transportManager.broadcast(wire);
     _emitMessageRevision();
@@ -135,7 +137,7 @@ class MessageController {
             result.decision.action == RouterAction.deliverAndForward;
     if (deliveredLocally && msg.type == MessageType.text) {
       if (result.decrypted != null) {
-        _plaintextCache[msg.id] = result.decrypted!.plaintext;
+        _cachePlaintext(msg.id, result.decrypted!.plaintext);
         _decryptedCtrl.add(result.decrypted!);
       }
       _emitMessageRevision();
@@ -399,6 +401,13 @@ class MessageController {
     } catch (e) {
       debugPrint('MessageController: bad SYNC_REQUEST — $e');
     }
+  }
+
+  void _cachePlaintext(String messageId, String plaintext) {
+    if (_plaintextCache.length >= _kPlaintextCacheMax) {
+      _plaintextCache.remove(_plaintextCache.keys.first);
+    }
+    _plaintextCache[messageId] = plaintext;
   }
 
   Future<void> dispose() async {
