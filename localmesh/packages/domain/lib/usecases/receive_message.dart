@@ -37,6 +37,12 @@ class ReceiveMessage {
         _keyDeriver = keyDeriver,
         _clock = clock;
 
+  static const _persistableTypes = {
+    MessageType.text,
+    MessageType.fileChunk,
+    MessageType.location,
+  };
+
   final MeshRouter _router;
   final IdentityRepository _identityRepo;
   final PeerRepository _peerRepo;
@@ -63,11 +69,15 @@ class ReceiveMessage {
     // Merge Lamport clock with the message's timestamp
     _clock.merge(message.lamportTs);
 
-    // Persist the envelope locally (offline-first)
-    await _messageRepo.saveMessage(message);
+    // Persist only content-bearing messages — control-plane messages
+    // (PEER_ANNOUNCE, SYNC_REQUEST) must not appear in the chat history.
+    if (_persistableTypes.contains(message.type)) {
+      await _messageRepo.saveMessage(message);
+    }
 
-    // Attempt to decrypt. Broadcast messages might not be decryptable
-    // by us — that's fine, we still persisted the envelope.
+    // Attempt to decrypt. Only content-bearing messages reach here
+    // (control messages are filtered above), but broadcast messages
+    // might not be decryptable by us — that is fine.
     DecryptedMessage? decrypted;
     try {
       final me = await _identityRepo.getIdentity();

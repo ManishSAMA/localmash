@@ -199,4 +199,95 @@ void main() {
       expect(result.decision.forwardMessage!.hopCount, 1);
     });
   });
+
+  group('ReceiveMessage — content-type filtering', () {
+    test('6. PEER_ANNOUNCE messages are NOT saved to the message repository', () async {
+      final identityRepo = FakeIdentityRepository();
+      final peerRepo = FakePeerRepository();
+      final messageRepo = FakeMessageRepository();
+
+      await identityRepo.saveIdentity(_alice);
+      await peerRepo.savePeer(_bob);
+
+      final receive = _makeReceiveMessage(
+        identityRepo: identityRepo,
+        peerRepo: peerRepo,
+        messageRepo: messageRepo,
+      );
+
+      final announceMsg = LocalMeshMessage(
+        id: 'msg-announce-1',
+        version: 1,
+        type: MessageType.peerAnnounce,
+        senderId: _bob.id,
+        recipientId: '*',
+        payload: const [],
+        hopCount: 0,
+        ttl: 5,
+        lamportTs: 3,
+        signature: const [1, 2, 3, 4], // valid for FakeMessageSigner
+        createdAt: 0,
+      );
+
+      await receive(announceMsg);
+
+      final stored = await messageRepo.getMessageById(announceMsg.id);
+      expect(stored, isNull, reason: 'PEER_ANNOUNCE must not be persisted to the message repository');
+    });
+
+    test('7. SYNC_REQUEST messages are NOT saved to the message repository', () async {
+      final identityRepo = FakeIdentityRepository();
+      final peerRepo = FakePeerRepository();
+      final messageRepo = FakeMessageRepository();
+
+      await identityRepo.saveIdentity(_alice);
+      await peerRepo.savePeer(_bob);
+
+      final receive = _makeReceiveMessage(
+        identityRepo: identityRepo,
+        peerRepo: peerRepo,
+        messageRepo: messageRepo,
+      );
+
+      final syncMsg = LocalMeshMessage(
+        id: 'msg-sync-1',
+        version: 1,
+        type: MessageType.syncRequest,
+        senderId: _bob.id,
+        recipientId: '*',
+        payload: const [],
+        hopCount: 0,
+        ttl: 5,
+        lamportTs: 4,
+        signature: const [1, 2, 3, 4],
+        createdAt: 0,
+      );
+
+      await receive(syncMsg);
+
+      final stored = await messageRepo.getMessageById(syncMsg.id);
+      expect(stored, isNull, reason: 'SYNC_REQUEST must not be persisted to the message repository');
+    });
+
+    test('8. TEXT messages are still saved (regression guard)', () async {
+      final identityRepo = FakeIdentityRepository();
+      final peerRepo = FakePeerRepository();
+      final messageRepo = FakeMessageRepository();
+
+      await identityRepo.saveIdentity(_alice);
+      await peerRepo.savePeer(_bob);
+
+      final receive = _makeReceiveMessage(
+        identityRepo: identityRepo,
+        peerRepo: peerRepo,
+        messageRepo: messageRepo,
+      );
+
+      final textMsg = _makeMsg();
+      await receive(textMsg);
+
+      final stored = await messageRepo.getMessageById(textMsg.id);
+      expect(stored, isNotNull, reason: 'TEXT messages must still be persisted');
+    });
+  });
 }
