@@ -397,4 +397,34 @@ void main() {
       );
     });
   });
+
+  group('BLE chunk reliability contract', () {
+    test('all messages delivered without loss across multiple sends', () async {
+      // MockTransport delivers reliably — this anchors the contract that BleTransport
+      // must match by using writeCharacteristicWithResponse for ALL chunks.
+      final nodeX = await _buildNode('Xavier');
+      final nodeY = await _buildNode('Yara');
+
+      nodeX.transport.linkTo(nodeY.transport);
+      await _registerPeer(nodeX, nodeY);
+      await _registerPeer(nodeY, nodeX);
+
+      final received = <String>[];
+      final sub = nodeY.controller.decryptedMessages.listen(
+        (dm) => received.add(dm.plaintext),
+      );
+
+      await nodeX.controller.sendText(recipientId: nodeY.fp, plaintext: 'alpha');
+      await nodeX.controller.sendText(recipientId: nodeY.fp, plaintext: 'beta');
+      await nodeX.controller.sendText(recipientId: nodeY.fp, plaintext: 'gamma');
+
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await sub.cancel();
+      await nodeX.controller.dispose();
+      await nodeY.controller.dispose();
+
+      expect(received, containsAll(['alpha', 'beta', 'gamma']),
+          reason: 'All messages must be delivered reliably');
+    });
+  });
 }

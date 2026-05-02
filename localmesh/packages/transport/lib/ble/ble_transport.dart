@@ -205,21 +205,16 @@ class BleTransport implements Transport {
           (i + _bleChunkSize > framed.length) ? framed.length : i + _bleChunkSize;
       chunks.add(framed.sublist(i, end));
     }
-    for (var i = 0; i < chunks.length; i++) {
-      final chunk = chunks[i];
-      final isLast = i == chunks.length - 1;
+    for (final chunk in chunks) {
       if (chunk.isNotEmpty) {
         debugPrint(
           '[TRANSPORT][BLE] first byte sent to $peerId via write: 0x${chunk.first.toRadixString(16).padLeft(2, '0')}',
         );
       }
-      if (isLast) {
-        // Final chunk uses write-with-response to detect disconnection
-        await _ble.writeCharacteristicWithResponse(char, value: chunk);
-      } else {
-        // Intermediate chunks use write-without-response — eliminates per-chunk RTT
-        await _ble.writeCharacteristicWithoutResponse(char, value: chunk);
-      }
+      // write-with-response for every chunk — one ATT RTT per 200 B is the
+      // safe choice. write-without-response silently drops chunks on lossy
+      // links, permanently stalling _BleFrameBuffer with a partial frame.
+      await _ble.writeCharacteristicWithResponse(char, value: chunk);
     }
   }
 
