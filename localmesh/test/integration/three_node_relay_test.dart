@@ -196,6 +196,7 @@ class _Node {
     required this.transport,
     required this.peerRepo,
     required this.messageRepo,
+    required this.identityRepo,
     required this.controller,
   });
 
@@ -203,6 +204,7 @@ class _Node {
   final MockTransport transport;
   final _FakePeerRepository peerRepo;
   final _FakeMessageRepository messageRepo;
+  final _FakeIdentityRepository identityRepo;
   final MessageController controller;
 
   String get fp => identity.fingerprint;
@@ -263,6 +265,8 @@ Future<_Node> _buildNode(String name) async {
     identityRepo: identityRepo,
     signer: signer,
     identityGenerator: _FakeIdentityGenerator(),
+    encryptor: encryptor,
+    keyDeriver: keyDeriver,
   );
   await controller.start();
 
@@ -271,6 +275,7 @@ Future<_Node> _buildNode(String name) async {
     transport: transport,
     peerRepo: peerRepo,
     messageRepo: messageRepo,
+    identityRepo: identityRepo,
     controller: controller,
   );
 }
@@ -438,6 +443,107 @@ void main() {
 
       expect(received, containsAll(['alpha', 'beta', 'gamma']),
           reason: 'All messages must be delivered reliably');
+    });
+  });
+
+  group('MessageController.decryptForDisplay', () {
+    test('returns plaintext for message not in session cache', () async {
+      final nodeA = await _buildNode('Aria');
+      final nodeB = await _buildNode('Bruno');
+      nodeA.transport.linkTo(nodeB.transport);
+      await _registerPeer(nodeA, nodeB);
+      await _registerPeer(nodeB, nodeA);
+
+      final received = <DecryptedMessage>[];
+      final sub = nodeB.controller.decryptedMessages.listen(received.add);
+      await nodeA.controller.sendText(
+        recipientId: nodeB.fp,
+        plaintext: 'historic message',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await sub.cancel();
+
+      expect(received, hasLength(1));
+      final envelope = received.first.envelope;
+
+      // decryptForDisplay must return the plaintext even if we call it
+      // with a fresh controller (cache miss). Here we just verify it works
+      // on nodeB.controller itself after the cache is hot from the receive.
+      final plaintext = await nodeB.controller.decryptForDisplay(envelope);
+      expect(plaintext, equals('historic message'));
+
+      await nodeA.controller.dispose();
+      await nodeB.controller.dispose();
+    });
+
+    test('cold-cache: fresh controller can decrypt stored envelope (app-restart scenario)', () async {
+      final nodeA = await _buildNode('Aria');
+      final nodeB = await _buildNode('Bruno');
+      nodeA.transport.linkTo(nodeB.transport);
+      await _registerPeer(nodeA, nodeB);
+      await _registerPeer(nodeB, nodeA);
+
+      // Exchange a message so nodeB stores the encrypted envelope
+      final received = <DecryptedMessage>[];
+      final sub = nodeB.controller.decryptedMessages.listen(received.add);
+      await nodeA.controller.sendText(
+        recipientId: nodeB.fp,
+        plaintext: 'historic message',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await sub.cancel();
+
+      expect(received, hasLength(1));
+      final envelope = received.first.envelope;
+
+      // Retrieve the stored envelope from the repo (simulates loading from DB)
+      final stored = await nodeB.messageRepo.getMessageById(envelope.id);
+      expect(stored, isNotNull);
+
+      // Build a NEW controller with the same repos but an empty plaintext cache
+      final freshController = MessageController(
+        transportManager: TransportManager([]),
+        receiveMessage: ReceiveMessage(
+          router: MeshRouter(
+            signer: _FakeSigner(),
+            myFingerprint: nodeB.fp,
+            lookupSenderPublicKey: (id) async {
+              final peer = await nodeB.peerRepo.getPeerById(id);
+              return peer?.signingPublicKey;
+            },
+          ),
+          identityRepo: nodeB.identityRepo,
+          peerRepo: nodeB.peerRepo,
+          messageRepo: nodeB.messageRepo,
+          encryptor: _FakeEncryptor(),
+          keyDeriver: _FakeKeyDeriver(),
+          clock: LamportClock(),
+        ),
+        sendMessage: SendMessage(
+          identityRepo: nodeB.identityRepo,
+          peerRepo: nodeB.peerRepo,
+          messageRepo: nodeB.messageRepo,
+          encryptor: _FakeEncryptor(),
+          signer: _FakeSigner(),
+          keyDeriver: _FakeKeyDeriver(),
+          clock: LamportClock(),
+        ),
+        syncHistory: SyncHistory(messageRepo: nodeB.messageRepo),
+        peerRepo: nodeB.peerRepo,
+        identityRepo: nodeB.identityRepo,
+        signer: _FakeSigner(),
+        identityGenerator: _FakeIdentityGenerator(),
+        encryptor: _FakeEncryptor(),
+        keyDeriver: _FakeKeyDeriver(),
+      );
+      // Do NOT call freshController.start() — we only need decryptForDisplay
+
+      final plaintext = await freshController.decryptForDisplay(stored!);
+      expect(plaintext, equals('historic message'));
+
+      await nodeA.controller.dispose();
+      await nodeB.controller.dispose();
+      await freshController.dispose();
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:domain/domain.dart';
+import '../controllers/message_controller.dart';
 import '../providers/providers.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -14,10 +15,19 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _controller = TextEditingController();
+  final Map<String, Future<String?>> _decryptFutures = {};
   bool _sending = false;
+
+  Future<String?> _decryptFuture(LocalMeshMessage msg, MessageController ctrl) {
+    return _decryptFutures.putIfAbsent(
+      msg.id,
+      () => ctrl.decryptForDisplay(msg),
+    );
+  }
 
   @override
   void dispose() {
+    _decryptFutures.clear();
     _controller.dispose();
     super.dispose();
   }
@@ -52,12 +62,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       itemCount: messages.length,
                       itemBuilder: (context, i) {
                         final m = messages[messages.length - 1 - i];
-                        final plaintext = messageController.cachedPlaintextFor(m.id);
-                        return ListTile(
-                          title: Text(plaintext ?? '[message not yet decrypted]'),
-                          subtitle: Text(
-                            '${m.senderId.substring(0, 8)}  •  '
-                            '${DateTime.fromMillisecondsSinceEpoch(m.createdAt).toLocal()}',
+                        final cached = messageController.cachedPlaintextFor(m.id);
+                        if (cached != null) {
+                          return _MessageTile(message: m, plaintext: cached);
+                        }
+                        return FutureBuilder<String?>(
+                          future: _decryptFuture(m, messageController),
+                          builder: (context, snap) => _MessageTile(
+                            message: m,
+                            plaintext: snap.data ?? '[decrypting...]',
                           ),
                         );
                       },
@@ -117,5 +130,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+}
+
+class _MessageTile extends StatelessWidget {
+  const _MessageTile({required this.message, required this.plaintext});
+
+  final LocalMeshMessage message;
+  final String plaintext;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      title: Text(plaintext),
+      subtitle: Text(
+        '${message.senderId.substring(0, 8)}  •  '
+        '${DateTime.fromMillisecondsSinceEpoch(message.createdAt).toLocal()}',
+      ),
+    );
   }
 }

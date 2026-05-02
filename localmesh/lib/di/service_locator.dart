@@ -103,5 +103,7 @@ Future<void> setupServiceLocator() async {
         identityRepo: getIt<IdentityRepository>(),
         signer: getIt<MessageSigner>(),
         identityGenerator: getIt<IdentityGenerator>(),
+        encryptor: getIt<MessageEncryptor>(),
+        keyDeriver: getIt<SessionKeyDeriver>(),
       ));
 }

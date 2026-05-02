@@ -37,11 +37,7 @@ class ReceiveMessage {
         _keyDeriver = keyDeriver,
         _clock = clock;
 
-  static const _persistableTypes = {
-    MessageType.text,
-    MessageType.fileChunk,
-    MessageType.location,
-  };
+  static const _persistableTypes = contentBearingMessageTypes;
 
   final MeshRouter _router;
   final IdentityRepository _identityRepo;

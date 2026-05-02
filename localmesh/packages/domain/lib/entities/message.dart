@@ -9,6 +9,15 @@ enum MessageType {
   peerAnnounce,
 }
 
+/// The set of [MessageType] values that carry user-visible content.
+/// Used to decide whether a message should be persisted and whether
+/// it can be decrypted for display.
+const contentBearingMessageTypes = {
+  MessageType.text,
+  MessageType.fileChunk,
+  MessageType.location,
+};
+
 @immutable
 class LocalMeshMessage {
   const LocalMeshMessage({

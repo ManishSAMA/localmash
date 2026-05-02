@@ -23,6 +23,8 @@ class MessageController {
     required IdentityRepository identityRepo,
     required MessageSigner signer,
     required IdentityGenerator identityGenerator,
+    required MessageEncryptor encryptor,
+    required SessionKeyDeriver keyDeriver,
   })  : _transportManager = transportManager,
         _receiveMessage = receiveMessage,
         _sendMessage = sendMessage,
@@ -30,7 +32,9 @@ class MessageController {
         _peerRepo = peerRepo,
         _identityRepo = identityRepo,
         _signer = signer,
-        _identityGenerator = identityGenerator;
+        _identityGenerator = identityGenerator,
+        _encryptor = encryptor,
+        _keyDeriver = keyDeriver;
 
   final TransportManager _transportManager;
   final ReceiveMessage _receiveMessage;
@@ -40,6 +44,8 @@ class MessageController {
   final IdentityRepository _identityRepo;
   final MessageSigner _signer;
   final IdentityGenerator _identityGenerator;
+  final MessageEncryptor _encryptor;
+  final SessionKeyDeriver _keyDeriver;
 
   StreamSubscription<TransportPayload>? _dataSub;
   StreamSubscription<PeerEvent>? _peerSub;
@@ -66,6 +72,38 @@ class MessageController {
   Stream<int> get messageRevisions => _messageRevisionCtrl.stream;
 
   String? cachedPlaintextFor(String messageId) => _plaintextCache[messageId];
+
+  Future<String?> decryptForDisplay(LocalMeshMessage msg) async {
+    if (!contentBearingMessageTypes.contains(msg.type)) return null;
+
+    final cached = _plaintextCache[msg.id];
+    if (cached != null) return cached;
+
+    try {
+      final me = await _identityRepo.getIdentity();
+      if (me == null) return null;
+
+      final sender = await _peerRepo.getPeerById(msg.senderId);
+      if (sender == null) return null;
+
+      final sessionKey = await _keyDeriver.deriveSessionKey(
+        myPrivateKey: me.encryptionPrivateKey,
+        theirPublicKey: sender.encryptionPublicKey,
+        myFingerprint: me.fingerprint,
+        theirFingerprint: sender.id,
+      );
+
+      final plaintextBytes = await _encryptor.decrypt(
+        encrypted: msg.payload,
+        sessionKey: sessionKey,
+      );
+      final plaintext = utf8.decode(plaintextBytes);
+      _cachePlaintext(msg.id, plaintext);
+      return plaintext;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Start listening to transport streams. Call after TransportManager.start().
   Future<void> start() async {
