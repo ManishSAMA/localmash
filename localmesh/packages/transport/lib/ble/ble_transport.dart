@@ -199,19 +199,27 @@ class BleTransport implements Transport {
     debugPrint(
       '[TRANSPORT][BLE] sending ${framed.length} bytes to $peerId via central write',
     );
+    final chunks = <Uint8List>[];
     for (var i = 0; i < framed.length; i += _bleChunkSize) {
       final end =
           (i + _bleChunkSize > framed.length) ? framed.length : i + _bleChunkSize;
-      final chunk = framed.sublist(i, end);
+      chunks.add(framed.sublist(i, end));
+    }
+    for (var i = 0; i < chunks.length; i++) {
+      final chunk = chunks[i];
+      final isLast = i == chunks.length - 1;
       if (chunk.isNotEmpty) {
         debugPrint(
           '[TRANSPORT][BLE] first byte sent to $peerId via write: 0x${chunk.first.toRadixString(16).padLeft(2, '0')}',
         );
       }
-      await _ble.writeCharacteristicWithResponse(
-        char,
-        value: chunk,
-      );
+      if (isLast) {
+        // Final chunk uses write-with-response to detect disconnection
+        await _ble.writeCharacteristicWithResponse(char, value: chunk);
+      } else {
+        // Intermediate chunks use write-without-response — eliminates per-chunk RTT
+        await _ble.writeCharacteristicWithoutResponse(char, value: chunk);
+      }
     }
   }
 
@@ -237,13 +245,10 @@ class BleTransport implements Transport {
 
   @override
   Future<void> broadcast(Uint8List data) async {
-    for (final p in connectedPeers) {
-      try {
-        await sendTo(p, data);
-      } catch (_) {
-        // best-effort
-      }
-    }
+    await Future.wait([
+      for (final p in connectedPeers)
+        sendTo(p, data).catchError((_) {}),
+    ]);
   }
 
   @override

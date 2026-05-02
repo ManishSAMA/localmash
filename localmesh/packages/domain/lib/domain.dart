@@ -14,6 +14,7 @@ export 'services/message_signer.dart';
 export 'services/message_encryptor.dart';
 export 'services/identity_generator.dart';
 export 'services/session_key_deriver.dart';
+export 'services/caching_session_key_deriver.dart';
 
 export 'protocols/mesh_router.dart';
 export 'protocols/lamport_clock.dart';

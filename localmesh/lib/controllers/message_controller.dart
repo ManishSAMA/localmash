@@ -146,16 +146,15 @@ class MessageController {
         result.decision.action == RouterAction.deliverAndForward) {
       final forwarded = result.decision.forwardMessage!;
       final wire = WireCodec.encode(forwarded);
-      for (final peer in _transportManager.connectedPeers) {
-        if (peer == payload.fromPeerId) continue;
-        try {
-          await _transportManager.sendTo(peer, wire);
-        } catch (e) {
-          debugPrint(
-            '[CONTROLLER] forward to $peer failed for message ${forwarded.id}: $e',
-          );
-        }
-      }
+      await Future.wait([
+        for (final peer in _transportManager.connectedPeers)
+          if (peer != payload.fromPeerId)
+            _transportManager.sendTo(peer, wire).catchError((Object e) {
+              debugPrint(
+                '[CONTROLLER] forward to $peer failed for message ${forwarded.id}: $e',
+              );
+            }),
+      ]);
     }
   }
 
@@ -385,18 +384,18 @@ class MessageController {
       final request = SyncRequest(chatRoomTimestamps: timestamps);
       final response = await _syncHistory.respondTo(request);
 
-      for (final m in response.messages) {
-        try {
-          await _transportManager.sendTo(fromPeerId, WireCodec.encode(m));
-          debugPrint(
-            '[CONTROLLER] sync response message ${m.id} sent to $fromPeerId',
-          );
-        } catch (e) {
-          debugPrint(
-            '[CONTROLLER] sync response message ${m.id} failed for $fromPeerId: $e',
-          );
-        }
-      }
+      await Future.wait([
+        for (final m in response.messages)
+          _transportManager.sendTo(fromPeerId, WireCodec.encode(m)).then((_) {
+            debugPrint(
+              '[CONTROLLER] sync response message ${m.id} sent to $fromPeerId',
+            );
+          }).catchError((Object e) {
+            debugPrint(
+              '[CONTROLLER] sync response message ${m.id} failed for $fromPeerId: $e',
+            );
+          }),
+      ]);
     } catch (e) {
       debugPrint('MessageController: bad SYNC_REQUEST — $e');
     }

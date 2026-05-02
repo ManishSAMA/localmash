@@ -62,9 +62,9 @@ class TransportManager {
   }
 
   Future<void> broadcast(Uint8List data) async {
-    for (final transport in _transports) {
-      await transport.broadcast(data);
-    }
+    await Future.wait([
+      for (final transport in _transports) transport.broadcast(data),
+    ]);
   }
 
   List<Transport> get transports => List.unmodifiable(_transports);

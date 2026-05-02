@@ -12,7 +12,9 @@ Future<void> setupServiceLocator() async {
   getIt.registerLazySingleton<IdentityGenerator>(() => IdentityService());
   getIt.registerLazySingleton<MessageEncryptor>(() => EncryptionService());
   getIt.registerLazySingleton<MessageSigner>(() => SigningService());
-  getIt.registerLazySingleton<SessionKeyDeriver>(() => KeyExchangeService());
+  getIt.registerLazySingleton<SessionKeyDeriver>(
+    () => CachingSessionKeyDeriver(KeyExchangeService()),
+  );
 
   // Repositories
   getIt.registerLazySingleton<MessageRepository>(() => HiveMessageRepository());
@@ -37,8 +39,8 @@ Future<void> setupServiceLocator() async {
   );
   getIt.registerLazySingleton<TransportManager>(
     () => TransportManager([
-      getIt<BleTransport>(),
       getIt<TcpLanTransport>(),
+      getIt<BleTransport>(),
     ]),
   );
 
