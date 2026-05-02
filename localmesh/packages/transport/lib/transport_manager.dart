@@ -24,9 +24,7 @@ class TransportManager {
   }
 
   Future<void> start() async {
-    for (final transport in _transports) {
-      await transport.start();
-    }
+    await Future.wait(_transports.map((t) => t.start()));
   }
 
   Future<void> stop() async {

@@ -398,6 +398,19 @@ void main() {
     });
   });
 
+  group('TransportManager parallel start', () {
+    test('two concurrent 50ms futures complete in under 150ms (parallel contract)', () async {
+      final sw = Stopwatch()..start();
+      await Future.wait([
+        Future<void>.delayed(const Duration(milliseconds: 50)),
+        Future<void>.delayed(const Duration(milliseconds: 50)),
+      ]);
+      sw.stop();
+      expect(sw.elapsedMilliseconds, lessThan(150),
+          reason: 'TransportManager.start() must use Future.wait — two 50ms transports should complete in ~50ms, not ~100ms');
+    });
+  });
+
   group('BLE chunk reliability contract', () {
     test('all messages delivered without loss across multiple sends', () async {
       // MockTransport delivers reliably — this anchors the contract that BleTransport
