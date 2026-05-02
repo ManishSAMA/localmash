@@ -57,6 +57,7 @@ class BleTransport implements Transport {
 
   @override
   Future<void> start() async {
+    if (_state == TransportState.running || _state == TransportState.starting) return;
     _state = TransportState.starting;
     debugPrint('[TRANSPORT][BLE] starting transport for "$myDeviceName"');
 
@@ -73,6 +74,7 @@ class BleTransport implements Transport {
       throw TransportException('ble', _bleStatusMessage(bleStatus));
     }
 
+    await _gattServerSub?.cancel();
     _gattServerSub = _gattServer.events.listen(_handleGattServerEvent);
     debugPrint('[TRANSPORT][BLE] starting Android GATT server + advertising');
     final result = await _gattServer.start(localName: myDeviceName);

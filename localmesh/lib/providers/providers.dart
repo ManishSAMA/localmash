@@ -34,12 +34,23 @@ final incomingDataProvider = StreamProvider<TransportPayload>(
   (ref) => ref.read(transportManagerProvider).incomingData,
 );
 
-// ── Connected peer list ──
+// ── Connected peer list (trusted only → Chats section) ──
 final connectedPeersProvider = FutureProvider<List<Peer>>(
   (ref) async {
-    ref.watch(peerEventsProvider); // refresh fast on transport connect/disconnect
-    ref.watch(peerRepositoryRevisionProvider); // refresh after repo writes complete
-    return ref.read(peerRepoProvider).getConnectedPeers();
+    ref.watch(peerEventsProvider);
+    ref.watch(peerRepositoryRevisionProvider);
+    final peers = await ref.read(peerRepoProvider).getConnectedPeers();
+    return peers.where((p) => p.isTrusted).toList();
+  },
+);
+
+// ── Nearby peers (connected but not yet trusted → Nearby section) ──
+final nearbyPeersProvider = FutureProvider<List<Peer>>(
+  (ref) async {
+    ref.watch(peerEventsProvider);
+    ref.watch(peerRepositoryRevisionProvider);
+    final peers = await ref.read(peerRepoProvider).getConnectedPeers();
+    return peers.where((p) => !p.isTrusted).toList();
   },
 );
 

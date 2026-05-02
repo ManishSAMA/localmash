@@ -7,5 +7,6 @@ abstract class PeerRepository {
   Future<List<Peer>> getConnectedPeers();
   Future<List<Peer>> getTrustedPeers();
   Future<void> updatePeerConnectionStatus(String id, bool isConnected);
+  Future<void> trustPeer(String id);
   Future<void> removePeer(String id);
 }

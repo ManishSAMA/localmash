@@ -85,6 +85,12 @@ class FakePeerRepository implements PeerRepository {
   }
 
   @override
+  Future<void> trustPeer(String id) async {
+    final peer = _peers[id];
+    if (peer != null) _peers[id] = peer.copyWith(isTrusted: true);
+  }
+
+  @override
   Future<void> removePeer(String id) async => _peers.remove(id);
 }
 

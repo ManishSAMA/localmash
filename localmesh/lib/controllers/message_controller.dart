@@ -167,12 +167,37 @@ class MessageController {
 
     if (event.connected) {
       _pendingConnectedTransportPeers.add(event.peerId);
+
+      // Create provisional peer so UI shows it immediately in Nearby section,
+      // even before PEER_ANNOUNCE exchange completes.
+      if (!_transportPeerToIdentity.containsKey(event.peerId)) {
+        final existing = await _peerRepo.getPeerById(event.peerId);
+        if (existing == null) {
+          final provisional = Peer(
+            id: event.peerId,
+            displayName: (event.displayName?.isNotEmpty == true)
+                ? event.displayName!
+                : 'Nearby Device',
+            signingPublicKey: const [],
+            encryptionPublicKey: const [],
+            lastSeen: DateTime.now().millisecondsSinceEpoch,
+            isConnected: true,
+            isTrusted: false,
+          );
+          await _peerRepo.savePeer(provisional);
+        }
+      }
     } else {
       _pendingConnectedTransportPeers.remove(event.peerId);
       final identityPeerId = _transportPeerToIdentity.remove(event.peerId);
       if (identityPeerId != null) {
         _identityToTransportPeer.remove(identityPeerId);
         await _peerRepo.updatePeerConnectionStatus(identityPeerId, false);
+      }
+      // Clean up stale provisional peer on disconnect
+      final provisional = await _peerRepo.getPeerById(event.peerId);
+      if (provisional != null && provisional.signingPublicKey.isEmpty) {
+        await _peerRepo.removePeer(event.peerId);
       }
     }
 
@@ -181,7 +206,26 @@ class MessageController {
     if (event.connected) {
       await _sendPeerAnnounceTo(event.peerId);
       await _sendSyncRequestTo(event.peerId);
+      // Retry announce after 4 s in case of BLE packet loss
+      _scheduleAnnounceRetry(event.peerId);
     }
+  }
+
+  void _scheduleAnnounceRetry(String transportPeerId) {
+    Future.delayed(const Duration(seconds: 4), () {
+      if (_pendingConnectedTransportPeers.contains(transportPeerId) &&
+          !_transportPeerToIdentity.containsKey(transportPeerId)) {
+        debugPrint('[CONTROLLER] retrying PEER_ANNOUNCE for $transportPeerId');
+        _sendPeerAnnounceTo(transportPeerId);
+        // One more retry at 10 s
+        Future.delayed(const Duration(seconds: 6), () {
+          if (_pendingConnectedTransportPeers.contains(transportPeerId) &&
+              !_transportPeerToIdentity.containsKey(transportPeerId)) {
+            _sendPeerAnnounceTo(transportPeerId);
+          }
+        });
+      }
+    });
   }
 
   // ── Peer announce ─────────────────────────────────────────────────────────
@@ -246,6 +290,7 @@ class MessageController {
 
       final existingPeer = await _peerRepo.getPeerById(msg.senderId);
       if (existingPeer != null &&
+          existingPeer.signingPublicKey.isNotEmpty &&
           (!listEquals(existingPeer.signingPublicKey, sigPub) ||
               !listEquals(existingPeer.encryptionPublicKey, encPub))) {
         debugPrint(
@@ -254,6 +299,17 @@ class MessageController {
         return;
       }
 
+      // Remove provisional peer (keyed by transport ID) if identity differs
+      if (transportPeerId != msg.senderId) {
+        final provisional = await _peerRepo.getPeerById(transportPeerId);
+        if (provisional != null && provisional.signingPublicKey.isEmpty) {
+          await _peerRepo.removePeer(transportPeerId);
+        }
+      }
+
+      // Preserve trust state across reconnects; new peers start untrusted
+      final isTrusted = existingPeer?.isTrusted ?? false;
+
       final peer = Peer(
         id: msg.senderId,
         displayName: name,
@@ -261,7 +317,7 @@ class MessageController {
         encryptionPublicKey: encPub,
         lastSeen: DateTime.now().millisecondsSinceEpoch,
         isConnected: _pendingConnectedTransportPeers.contains(transportPeerId),
-        isTrusted: true, // TOFU — trust on first use
+        isTrusted: isTrusted,
       );
       await _peerRepo.savePeer(peer);
       _transportPeerToIdentity[transportPeerId] = msg.senderId;
@@ -351,6 +407,11 @@ class MessageController {
     await _decryptedCtrl.close();
     await _peerRevisionCtrl.close();
     await _messageRevisionCtrl.close();
+  }
+
+  Future<void> trustPeer(String peerId) async {
+    await _peerRepo.trustPeer(peerId);
+    _emitPeerRevision();
   }
 
   void _emitPeerRevision() {

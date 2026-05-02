@@ -1,9 +1,6 @@
-import 'dart:async' show unawaited;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/providers.dart';
-import 'home_screen.dart';
 
 class IdentitySetupScreen extends ConsumerStatefulWidget {
   const IdentitySetupScreen({super.key});
@@ -65,20 +62,16 @@ class _IdentitySetupScreenState extends ConsumerState<IdentitySetupScreen> {
     try {
       final useCase = ref.read(createIdentityProvider);
       await useCase(_controller.text.trim());
+      // Invalidating the provider causes AppRouter to re-evaluate and
+      // automatically advance to the permissions screen.
       ref.invalidate(currentIdentityProvider);
-      if (mounted) {
-        unawaited(Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-        ));
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e')),
         );
+        setState(() => _busy = false);
       }
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 }

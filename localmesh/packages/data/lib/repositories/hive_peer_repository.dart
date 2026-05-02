@@ -45,6 +45,13 @@ class HivePeerRepository implements PeerRepository {
   }
 
   @override
+  Future<void> trustPeer(String id) async {
+    final peer = HiveLocalDataSource.peersBox.get(id);
+    if (peer == null) return;
+    await HiveLocalDataSource.peersBox.put(id, peer.copyWith(isTrusted: true));
+  }
+
+  @override
   Future<void> removePeer(String id) async {
     await HiveLocalDataSource.peersBox.delete(id);
     _connectedIds.remove(id);
