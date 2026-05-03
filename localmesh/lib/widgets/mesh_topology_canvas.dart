@@ -17,6 +17,34 @@ class MeshTopologyCanvas extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (peers.isEmpty) {
+      return LayoutBuilder(
+        builder: (context, c) {
+          final w = c.maxWidth;
+          final h = math.max(minHeight, 200.0);
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: CustomPaint(
+              size: Size(w, h),
+              painter: const _EmptyTopologyPainter(),
+              child: SizedBox(
+                width: w,
+                height: h,
+                child: const Center(
+                  child: Text(
+                    'No topology data',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      color: LocalMeshColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
     return LayoutBuilder(
       builder: (context, c) {
         final w = c.maxWidth;
@@ -26,7 +54,7 @@ class MeshTopologyCanvas extends StatelessWidget {
           child: CustomPaint(
             size: Size(w, h),
             painter: _MeshTopologyPainter(
-              peerCount: peers.isEmpty ? 5 : peers.length,
+              peerCount: peers.length,
             ),
             child: SizedBox(width: w, height: h),
           ),
@@ -34,6 +62,30 @@ class MeshTopologyCanvas extends StatelessWidget {
       },
     );
   }
+}
+
+class _EmptyTopologyPainter extends CustomPainter {
+  const _EmptyTopologyPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bg = Paint()..color = LocalMeshColors.background;
+    canvas.drawRect(Offset.zero & size, bg);
+
+    final grid = Paint()
+      ..color = LocalMeshColors.borderMuted.withValues(alpha: 0.25)
+      ..strokeWidth = 0.5;
+    const step = 24.0;
+    for (var x = 0.0; x < size.width; x += step) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 0.0; y < size.height; y += step) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _EmptyTopologyPainter oldDelegate) => false;
 }
 
 class _MeshTopologyPainter extends CustomPainter {

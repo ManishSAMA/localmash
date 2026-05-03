@@ -13,6 +13,7 @@ import '../widgets/mesh_topology_canvas.dart';
 final allPeersProvider = FutureProvider<List<Peer>>(
   (ref) async {
     ref.watch(peerEventsProvider);
+    ref.watch(transportStatusesProvider);
     ref.watch(peerRepositoryRevisionProvider);
     return ref.read(peerRepoProvider).getConnectedPeers();
   },
@@ -46,6 +47,8 @@ class NetworkHealthBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final manager = ref.watch(transportManagerProvider);
     final peersAsync = ref.watch(allPeersProvider);
+    final diagnosticsAsync = ref.watch(meshDiagnosticsProvider);
+    ref.watch(transportStatusesProvider);
     ref.watch(peerEventsProvider);
     final scheme = Theme.of(context).colorScheme;
 
@@ -54,11 +57,16 @@ class NetworkHealthBody extends ConsumerWidget {
       children: [
         const _DiagnosticsHeaderCard(),
         const SizedBox(height: 16),
-        const LatencyPerHopPanel(currentMs: 24),
+        const LatencyPerHopPanel(samples: []),
         const SizedBox(height: 12),
         const BatteryDrainPanel(),
         const SizedBox(height: 12),
-        const RoutingEventsLogPanel(),
+        diagnosticsAsync.when(
+          loading: () => const RoutingEventsLogPanel(events: []),
+          error: (_, __) => const RoutingEventsLogPanel(events: []),
+          data: (diagnostics) =>
+              RoutingEventsLogPanel(events: diagnostics.routingEvents),
+        ),
         const SizedBox(height: 20),
         const _SectionLabel('MESH TOPOLOGY'),
         const SizedBox(height: 8),
@@ -77,7 +85,9 @@ class NetworkHealthBody extends ConsumerWidget {
                     Icon(Icons.hub_outlined, color: scheme.primary, size: 20),
                     const SizedBox(width: 8),
                     Text(
-                      'MESH ACTIVE // ${peers.length} PEERS',
+                      peers.isEmpty
+                          ? 'MESH INACTIVE // 0 PEERS'
+                          : 'MESH ACTIVE // ${peers.length} PEERS',
                       style: TextStyle(
                         fontFamily: 'monospace',
                         color: scheme.primary,

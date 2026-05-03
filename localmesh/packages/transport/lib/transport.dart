@@ -2,6 +2,34 @@ import 'dart:typed_data';
 
 enum TransportState { idle, starting, running, stopping, error }
 
+enum TransportIssue {
+  none,
+  bluetoothDisabled,
+  permissionDenied,
+  unsupported,
+  locationDisabled,
+  discoveryFailed,
+  unavailable,
+}
+
+class TransportStatus {
+  const TransportStatus({
+    required this.name,
+    required this.state,
+    this.issue = TransportIssue.none,
+    this.message,
+    this.discoveryInProgress = false,
+    this.connectedPeers = const [],
+  });
+
+  final String name;
+  final TransportState state;
+  final TransportIssue issue;
+  final String? message;
+  final bool discoveryInProgress;
+  final List<String> connectedPeers;
+}
+
 class PeerEvent {
   PeerEvent({
     required this.peerId,
@@ -48,6 +76,7 @@ abstract class Transport {
   Stream<PeerEvent> get peerEvents;
 
   Stream<TransportPayload> get incomingData;
+  Stream<TransportStatus> get status;
   Future<void> sendTo(String peerId, Uint8List data);
   Future<void> broadcast(Uint8List data);
   TransportState get state;

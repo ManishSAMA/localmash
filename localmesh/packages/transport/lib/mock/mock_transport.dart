@@ -33,6 +33,8 @@ class MockTransport implements Transport {
       StreamController<PeerEvent>.broadcast();
   final StreamController<TransportPayload> _dataCtrl =
       StreamController<TransportPayload>.broadcast();
+  final StreamController<TransportStatus> _statusCtrl =
+      StreamController<TransportStatus>.broadcast();
 
   @override
   String get name => 'mock';
@@ -47,6 +49,9 @@ class MockTransport implements Transport {
   Stream<TransportPayload> get incomingData => _dataCtrl.stream;
 
   @override
+  Stream<TransportStatus> get status => _statusCtrl.stream;
+
+  @override
   List<String> get connectedPeers =>
       _linked.keys.toList();
 
@@ -56,6 +61,7 @@ class MockTransport implements Transport {
   @override
   Future<void> start() async {
     _state = TransportState.running;
+    _emitStatus();
   }
 
   @override
@@ -65,6 +71,7 @@ class MockTransport implements Transport {
     for (final p in peers) {
       unlinkFrom(_linked[p]!);
     }
+    _emitStatus();
   }
 
   @override
@@ -84,12 +91,16 @@ class MockTransport implements Transport {
       connected: true,
       transportName: 'mock',
     ));
+    _emitStatus();
+    other._emitStatus();
     other._peerCtrl.add(PeerEvent(
       peerId: peerId,
       displayName: displayName,
       connected: true,
       transportName: 'mock',
     ));
+    _emitStatus();
+    other._emitStatus();
   }
 
   /// Simulate disconnection from [other].
@@ -143,5 +154,15 @@ class MockTransport implements Transport {
     await stop();
     await _peerCtrl.close();
     await _dataCtrl.close();
+    await _statusCtrl.close();
+  }
+
+  void _emitStatus() {
+    if (_statusCtrl.isClosed) return;
+    _statusCtrl.add(TransportStatus(
+      name: name,
+      state: _state,
+      connectedPeers: connectedPeers,
+    ));
   }
 }

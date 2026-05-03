@@ -5,7 +5,6 @@ import 'package:transport/transport.dart';
 import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../widgets/mesh_topology_canvas.dart';
-import '../widgets/signal_strength_bars.dart';
 import 'chat_screen.dart';
 import 'network_health_screen.dart';
 
@@ -54,23 +53,84 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  int _signalBars(Peer p) {
-    final ageMs =
-        DateTime.now().millisecondsSinceEpoch - p.lastSeen;
-    final ageSec = ageMs ~/ 1000;
-    if (ageSec < 30) return 4;
-    if (ageSec < 120) return 3;
-    if (ageSec < 300) return 2;
-    return 1;
+  _RuntimeMeshStatus _runtimeStatus(List<TransportStatus> statuses) {
+    TransportStatus? ble;
+    for (final status in statuses) {
+      if (status.name == 'ble') {
+        ble = status;
+        break;
+      }
+    }
+    if (ble?.issue == TransportIssue.bluetoothDisabled) {
+      return const _RuntimeMeshStatus(
+        state: _MeshState.error,
+        message: 'Bluetooth disabled',
+        discoveryEnabled: false,
+      );
+    }
+    if (ble?.issue == TransportIssue.permissionDenied) {
+      return const _RuntimeMeshStatus(
+        state: _MeshState.error,
+        message: 'Bluetooth permission denied',
+        discoveryEnabled: false,
+      );
+    }
+    if (ble?.issue == TransportIssue.locationDisabled ||
+        ble?.issue == TransportIssue.unsupported ||
+        ble?.issue == TransportIssue.unavailable) {
+      return _RuntimeMeshStatus(
+        state: _MeshState.error,
+        message: ble?.message ?? 'Bluetooth unavailable',
+        discoveryEnabled: false,
+      );
+    }
+    if (statuses.any((s) => s.issue == TransportIssue.discoveryFailed)) {
+      final failed = statuses.firstWhere(
+        (s) => s.issue == TransportIssue.discoveryFailed,
+      );
+      return _RuntimeMeshStatus(
+        state: _MeshState.error,
+        message: failed.message ?? 'Discovery failed',
+        discoveryEnabled: true,
+      );
+    }
+    if (statuses.any((s) => s.state == TransportState.running)) {
+      final peerCount =
+          statuses.fold<int>(0, (sum, s) => sum + s.connectedPeers.length);
+      return _RuntimeMeshStatus(
+        state: _MeshState.running,
+        message: peerCount == 0 ? 'No peers nearby' : 'Peer connected',
+        discoveryEnabled: true,
+      );
+    }
+    if (statuses
+        .any((s) => s.state == TransportState.starting || s.discoveryInProgress)) {
+      return const _RuntimeMeshStatus(
+        state: _MeshState.starting,
+        message: 'Discovery in progress',
+        discoveryEnabled: true,
+      );
+    }
+    return const _RuntimeMeshStatus(
+      state: _MeshState.idle,
+      message: 'Mesh inactive',
+      discoveryEnabled: true,
+    );
   }
-
-  String _radioLabel(Peer p) =>
-      p.id.hashCode.isEven ? 'BLE' : 'WFD';
 
   @override
   Widget build(BuildContext context) {
     final nearbyAsync = ref.watch(nearbyPeersProvider);
     final chatsAsync = ref.watch(connectedPeersProvider);
+    final statusesAsync = ref.watch(transportStatusesProvider);
+    final diagnosticsAsync = ref.watch(meshDiagnosticsProvider);
+    final runtime = _runtimeStatus(statusesAsync.valueOrNull ?? const []);
+    final effectiveState =
+        runtime.state == _MeshState.idle ? _meshState : runtime.state;
+    final effectiveMessage = runtime.message ??
+        (effectiveState == _MeshState.error ? _meshError : null);
+    final maxHopDepth =
+        diagnosticsAsync.valueOrNull?.maxHopDepth ?? 0;
     final scheme = Theme.of(context).colorScheme;
 
     ref.listen<AsyncValue<String>>(transportErrorsProvider, (_, next) {
@@ -111,8 +171,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: Column(
         children: [
           _MeshStatusBar(
-            state: _meshState,
-            error: _meshError,
+            state: effectiveState,
+            message: effectiveMessage,
+            retryEnabled: runtime.discoveryEnabled,
             onRetry: _startMesh,
           ),
           Expanded(
@@ -120,11 +181,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               index: _tab,
               children: [
                 _DashboardTab(
-                  meshRunning: _meshState == _MeshState.running,
+                  meshRunning: effectiveState == _MeshState.running,
+                  meshStatusMessage: effectiveMessage ?? 'Mesh inactive',
+                  discoveryEnabled: runtime.discoveryEnabled,
+                  maxHopDepth: maxHopDepth,
                   nearbyAsync: nearbyAsync,
                   chatsAsync: chatsAsync,
-                  onPeerTap: _signalBars,
-                  radioLabel: _radioLabel,
                 ),
                 _ChatTab(chatsAsync: chatsAsync),
                 const _FilesTab(),
@@ -167,17 +229,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 class _DashboardTab extends ConsumerWidget {
   const _DashboardTab({
     required this.meshRunning,
+    required this.meshStatusMessage,
+    required this.discoveryEnabled,
+    required this.maxHopDepth,
     required this.nearbyAsync,
     required this.chatsAsync,
-    required this.onPeerTap,
-    required this.radioLabel,
   });
 
   final bool meshRunning;
+  final String meshStatusMessage;
+  final bool discoveryEnabled;
+  final int maxHopDepth;
   final AsyncValue<List<Peer>> nearbyAsync;
   final AsyncValue<List<Peer>> chatsAsync;
-  final int Function(Peer) onPeerTap;
-  final String Function(Peer) radioLabel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -210,13 +274,15 @@ class _DashboardTab extends ConsumerWidget {
               color: LocalMeshColors.emergency,
               borderRadius: BorderRadius.circular(8),
               child: InkWell(
-                onTap: () {
+                onTap: discoveryEnabled
+                    ? () {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Emergency broadcast — mesh transmit pending'),
                     ),
                   );
-                },
+                }
+                    : null,
                 borderRadius: BorderRadius.circular(8),
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 14, horizontal: 12),
@@ -245,25 +311,27 @@ class _DashboardTab extends ConsumerWidget {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: chatsAsync.when(
+            child: nearbyAsync.when(
               loading: () => const SizedBox.shrink(),
               error: (_, __) => const SizedBox.shrink(),
-              data: (trusted) {
+              data: (nearby) {
+                final trusted = chatsAsync.valueOrNull ?? const <Peer>[];
+                final actualPeerCount = nearby.length + trusted.length;
                 return Row(
                   children: [
                     Expanded(
                       child: _StatCard(
                         title: 'ACTIVE PEERS',
-                        value: '${trusted.length}',
-                        subtitle: '• SYNCED',
+                        value: '$actualPeerCount',
+                        subtitle: actualPeerCount == 0 ? 'NO PEERS' : 'CONNECTED',
                         accent: scheme.primary,
                       ),
                     ),
                     const SizedBox(width: 12),
-                    const Expanded(
+                    Expanded(
                       child: _StatCard(
                         title: 'TOTAL HOPS REACHED',
-                        value: '3',
+                        value: '$maxHopDepth',
                         subtitle: 'MAX_DEPTH',
                         accent: LocalMeshColors.textSecondary,
                       ),
@@ -274,13 +342,18 @@ class _DashboardTab extends ConsumerWidget {
             ),
           ),
         ),
-        const SliverToBoxAdapter(
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: _NetworkHealthSummary(),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _NetworkHealthSummary(
+              status: meshRunning
+                  ? (maxHopDepth > 0 ? 'ACTIVE' : 'IDLE')
+                  : 'INACTIVE',
+              detail: meshStatusMessage,
+            ),
           ),
         ),
-        if (meshRunning) ...[
+        if (meshRunning && discoveryEnabled) ...[
           const SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
@@ -297,8 +370,6 @@ class _DashboardTab extends ConsumerWidget {
           ),
           _NearbySliver(
             nearbyAsync: nearbyAsync,
-            onSignalBars: onPeerTap,
-            radioLabel: radioLabel,
           ),
           SliverToBoxAdapter(
             child: Padding(
@@ -326,11 +397,11 @@ class _DashboardTab extends ConsumerWidget {
             ),
           ),
         ] else
-          const SliverFillRemaining(
+          SliverFillRemaining(
             child: Center(
               child: Text(
-                'Start the mesh to discover peers',
-                style: TextStyle(color: LocalMeshColors.textSecondary),
+                meshStatusMessage,
+                style: const TextStyle(color: LocalMeshColors.textSecondary),
               ),
             ),
           ),
@@ -340,7 +411,13 @@ class _DashboardTab extends ConsumerWidget {
 }
 
 class _NetworkHealthSummary extends StatelessWidget {
-  const _NetworkHealthSummary();
+  const _NetworkHealthSummary({
+    required this.status,
+    required this.detail,
+  });
+
+  final String status;
+  final String detail;
 
   @override
   Widget build(BuildContext context) {
@@ -360,11 +437,18 @@ class _NetworkHealthSummary extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 Text(
-                  'STABLE',
+                  status,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
                       ),
+                ),
+                Text(
+                  detail,
+                  style: const TextStyle(
+                    color: LocalMeshColors.textSecondary,
+                    fontSize: 11,
+                  ),
                 ),
               ],
             ),
@@ -454,13 +538,9 @@ class _StatCard extends StatelessWidget {
 class _NearbySliver extends ConsumerWidget {
   const _NearbySliver({
     required this.nearbyAsync,
-    required this.onSignalBars,
-    required this.radioLabel,
   });
 
   final AsyncValue<List<Peer>> nearbyAsync;
-  final int Function(Peer) onSignalBars;
-  final String Function(Peer) radioLabel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -501,8 +581,7 @@ class _NearbySliver extends ConsumerWidget {
               final initials = p.displayName.isNotEmpty
                   ? p.displayName[0].toUpperCase()
                   : '?';
-              final bars = onSignalBars(p);
-              final radio = radioLabel(p);
+              final radio = _transportLabel(p);
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: ListTile(
@@ -534,37 +613,26 @@ class _NearbySliver extends ConsumerWidget {
                         : 'LAST SEEN • ${_formatLastSeen(p.lastSeen)}',
                     style: const TextStyle(fontSize: 11),
                   ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: radio == 'BLE'
-                                ? scheme.primary
-                                : LocalMeshColors.borderMuted,
+                  trailing: radio == null
+                      ? null
+                      : Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
                           ),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          radio,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 9,
-                            color: radio == 'BLE'
-                                ? scheme.primary
-                                : LocalMeshColors.textSecondary,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: LocalMeshColors.borderMuted),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            radio,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 9,
+                              color: LocalMeshColors.textSecondary,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      SignalStrengthBars(level: bars),
-                    ],
-                  ),
                   onTap: isProvisional
                       ? null
                       : () => showDialog<void>(
@@ -587,6 +655,12 @@ class _NearbySliver extends ConsumerWidget {
     if (d.inSeconds < 60) return '${d.inSeconds}s';
     if (d.inMinutes < 60) return '${d.inMinutes}m';
     return '${d.inHours}h';
+  }
+
+  String? _transportLabel(Peer peer) {
+    if (peer.id.startsWith('lan:')) return 'LAN';
+    if (peer.id.startsWith('host-')) return 'WFD';
+    return null;
   }
 }
 
@@ -823,15 +897,29 @@ class _FingerprintDialogState extends ConsumerState<_FingerprintDialog> {
 
 enum _MeshState { idle, starting, running, error }
 
+class _RuntimeMeshStatus {
+  const _RuntimeMeshStatus({
+    required this.state,
+    required this.discoveryEnabled,
+    this.message,
+  });
+
+  final _MeshState state;
+  final String? message;
+  final bool discoveryEnabled;
+}
+
 class _MeshStatusBar extends StatelessWidget {
   const _MeshStatusBar({
     required this.state,
-    required this.error,
+    required this.message,
+    required this.retryEnabled,
     required this.onRetry,
   });
 
   final _MeshState state;
-  final String? error;
+  final String? message;
+  final bool retryEnabled;
   final VoidCallback onRetry;
 
   @override
@@ -855,7 +943,7 @@ class _MeshStatusBar extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Text(
-              'STARTING MESH…',
+              (message ?? 'Starting mesh').toUpperCase(),
               style: TextStyle(
                 fontFamily: 'monospace',
                 color: scheme.onSurfaceVariant,
@@ -871,7 +959,7 @@ class _MeshStatusBar extends StatelessWidget {
             Icon(Icons.wifi_tethering, color: scheme.primary, size: 18),
             const SizedBox(width: 8),
             Text(
-              'MESH ACTIVE',
+              (message ?? 'Mesh active').toUpperCase(),
               style: TextStyle(
                 fontFamily: 'monospace',
                 color: scheme.primary,
@@ -889,14 +977,14 @@ class _MeshStatusBar extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                error ?? 'Failed to start mesh',
+                message ?? 'Failed to start mesh',
                 style: TextStyle(color: scheme.onErrorContainer, fontSize: 12),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             TextButton(
-              onPressed: onRetry,
+              onPressed: retryEnabled ? onRetry : null,
               child: Text('Retry',
                   style: TextStyle(color: scheme.onErrorContainer)),
             ),

@@ -36,10 +36,30 @@ final incomingDataProvider = StreamProvider<TransportPayload>(
   (ref) => ref.read(transportManagerProvider).incomingData,
 );
 
+final transportStatusesProvider = StreamProvider<List<TransportStatus>>(
+  (ref) async* {
+    final manager = ref.read(transportManagerProvider);
+    final statuses = <String, TransportStatus>{
+      for (final t in manager.transports)
+        t.name: TransportStatus(
+          name: t.name,
+          state: t.state,
+          connectedPeers: t.connectedPeers,
+        ),
+    };
+    yield statuses.values.toList(growable: false);
+    await for (final status in manager.status) {
+      statuses[status.name] = status;
+      yield statuses.values.toList(growable: false);
+    }
+  },
+);
+
 // ── Connected peer list (trusted only → Chats section) ──
 final connectedPeersProvider = FutureProvider<List<Peer>>(
   (ref) async {
     ref.watch(peerEventsProvider);
+    ref.watch(transportStatusesProvider);
     ref.watch(peerRepositoryRevisionProvider);
     final peers = await ref.read(peerRepoProvider).getConnectedPeers();
     return peers.where((p) => p.isTrusted).toList();
@@ -50,6 +70,7 @@ final connectedPeersProvider = FutureProvider<List<Peer>>(
 final nearbyPeersProvider = FutureProvider<List<Peer>>(
   (ref) async {
     ref.watch(peerEventsProvider);
+    ref.watch(transportStatusesProvider);
     ref.watch(peerRepositoryRevisionProvider);
     final peers = await ref.read(peerRepoProvider).getConnectedPeers();
     return peers.where((p) => !p.isTrusted).toList();
@@ -95,6 +116,17 @@ final decryptedMessagesProvider = StreamProvider<DecryptedMessage>(
   (ref) async* {
     final ctrl = await getIt.getAsync<MessageController>();
     yield* ctrl.decryptedMessages;
+  },
+);
+
+final meshDiagnosticsProvider = StreamProvider<MeshDiagnostics>(
+  (ref) async* {
+    try {
+      final ctrl = await getIt.getAsync<MessageController>();
+      yield* ctrl.diagnostics;
+    } catch (_) {
+      yield const MeshDiagnostics();
+    }
   },
 );
 

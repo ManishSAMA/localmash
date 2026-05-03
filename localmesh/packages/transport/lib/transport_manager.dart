@@ -23,6 +23,11 @@ class TransportManager {
     return StreamGroup.merge(streams);
   }
 
+  Stream<TransportStatus> get status {
+    final streams = _transports.map((t) => t.status).toList();
+    return StreamGroup.merge(streams);
+  }
+
   Future<void> start() async {
     await Future.wait(_transports.map((t) => t.start()));
   }

@@ -31,6 +31,8 @@ class TcpLanTransport implements Transport {
       StreamController.broadcast();
   final StreamController<TransportPayload> _incomingCtrl =
       StreamController.broadcast();
+  final StreamController<TransportStatus> _statusCtrl =
+      StreamController.broadcast();
 
   TransportState _state = TransportState.idle;
 
@@ -47,6 +49,9 @@ class TcpLanTransport implements Transport {
   Stream<TransportPayload> get incomingData => _incomingCtrl.stream;
 
   @override
+  Stream<TransportStatus> get status => _statusCtrl.stream;
+
+  @override
   List<String> get connectedPeers => List.unmodifiable(_peerSockets.keys);
 
   @override
@@ -58,6 +63,7 @@ class TcpLanTransport implements Transport {
   Future<void> start() async {
     if (_state == TransportState.running) return;
     _state = TransportState.starting;
+    _emitStatus(discoveryInProgress: true);
 
     try {
       await _cacheLocalIps();
@@ -83,9 +89,14 @@ class TcpLanTransport implements Transport {
       _sendBeacon();
 
       _state = TransportState.running;
+      _emitStatus(discoveryInProgress: true);
       debugPrint('[LAN] started — TCP:$_tcpPort UDP:$_udpPort');
     } catch (e) {
       _state = TransportState.error;
+      _emitStatus(
+        issue: TransportIssue.discoveryFailed,
+        message: 'LAN discovery failed: $e',
+      );
       debugPrint('[LAN] start failed: $e');
       // Don't rethrow — allow app to run with BLE-only if LAN unavailable
     }
@@ -106,6 +117,7 @@ class TcpLanTransport implements Transport {
     await _server?.close();
     _server = null;
     _state = TransportState.idle;
+    _emitStatus();
   }
 
   @override
@@ -230,6 +242,7 @@ class TcpLanTransport implements Transport {
       connected: true,
       transportName: name,
     ));
+    _emitStatus();
 
     socket.listen(
       (data) {
@@ -258,6 +271,7 @@ class TcpLanTransport implements Transport {
       connected: false,
       transportName: name,
     ));
+    _emitStatus();
     debugPrint('[LAN] peer disconnected: $peerId');
   }
 
@@ -287,6 +301,22 @@ class TcpLanTransport implements Transport {
     frame[1] = len & 0xFF;
     frame.setRange(2, 2 + len, data);
     socket.add(frame);
+  }
+
+  void _emitStatus({
+    TransportIssue issue = TransportIssue.none,
+    String? message,
+    bool discoveryInProgress = false,
+  }) {
+    if (_statusCtrl.isClosed) return;
+    _statusCtrl.add(TransportStatus(
+      name: name,
+      state: _state,
+      issue: issue,
+      message: message,
+      discoveryInProgress: discoveryInProgress,
+      connectedPeers: connectedPeers,
+    ));
   }
 }
 

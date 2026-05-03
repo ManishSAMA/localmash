@@ -6,6 +6,42 @@ import 'package:flutter/foundation.dart';
 import 'package:domain/domain.dart';
 import 'package:transport/transport_package.dart';
 
+class RoutingEvent {
+  const RoutingEvent({
+    required this.timestamp,
+    required this.payload,
+    required this.status,
+  });
+
+  final DateTime timestamp;
+  final String payload;
+  final String status;
+}
+
+class MeshDiagnostics {
+  const MeshDiagnostics({
+    this.maxHopDepth = 0,
+    this.forwardedMessages = 0,
+    this.routingEvents = const [],
+  });
+
+  final int maxHopDepth;
+  final int forwardedMessages;
+  final List<RoutingEvent> routingEvents;
+
+  MeshDiagnostics copyWith({
+    int? maxHopDepth,
+    int? forwardedMessages,
+    List<RoutingEvent>? routingEvents,
+  }) {
+    return MeshDiagnostics(
+      maxHopDepth: maxHopDepth ?? this.maxHopDepth,
+      forwardedMessages: forwardedMessages ?? this.forwardedMessages,
+      routingEvents: routingEvents ?? this.routingEvents,
+    );
+  }
+}
+
 /// Bidirectional bridge between the transport layer and domain use cases.
 ///
 /// Incoming:  transport → WireCodec.decode → MeshRouter → deliver/forward
@@ -57,12 +93,15 @@ class MessageController {
       StreamController<int>.broadcast();
   final StreamController<int> _messageRevisionCtrl =
       StreamController<int>.broadcast();
+  final StreamController<MeshDiagnostics> _diagnosticsCtrl =
+      StreamController<MeshDiagnostics>.broadcast();
   final Map<String, String> _plaintextCache = {};
   final Map<String, String> _transportPeerToIdentity = {};
   final Map<String, String> _identityToTransportPeer = {};
   final Set<String> _pendingConnectedTransportPeers = <String>{};
   int _peerRevision = 0;
   int _messageRevision = 0;
+  MeshDiagnostics _diagnostics = const MeshDiagnostics();
 
   static const int _kPlaintextCacheMax = 1000;
 
@@ -70,6 +109,10 @@ class MessageController {
   Stream<DecryptedMessage> get decryptedMessages => _decryptedCtrl.stream;
   Stream<int> get peerRevisions => _peerRevisionCtrl.stream;
   Stream<int> get messageRevisions => _messageRevisionCtrl.stream;
+  Stream<MeshDiagnostics> get diagnostics async* {
+    yield _diagnostics;
+    yield* _diagnosticsCtrl.stream;
+  }
 
   String? cachedPlaintextFor(String messageId) => _plaintextCache[messageId];
 
@@ -142,6 +185,10 @@ class MessageController {
     _cachePlaintext(msg.id, plaintext);
     final wire = WireCodec.encode(msg);
     await _transportManager.broadcast(wire);
+    _addRoutingEvent(
+      payload: 'Text message sent • ${_shortId(msg.id)}',
+      status: 'SENT',
+    );
     _emitMessageRevision();
     return msg;
   }
@@ -154,6 +201,7 @@ class MessageController {
       msg = WireCodec.decode(payload.data);
     } catch (e) {
       debugPrint('MessageController: failed to decode payload — $e');
+      _addRoutingEvent(payload: 'Decode failed', status: 'DROP');
       return;
     }
 
@@ -184,6 +232,10 @@ class MessageController {
         _cachePlaintext(msg.id, result.decrypted!.plaintext);
         _decryptedCtrl.add(result.decrypted!);
       }
+      _addRoutingEvent(
+        payload: 'Message delivered • ${_shortId(msg.id)}',
+        status: 'OK',
+      );
       _emitMessageRevision();
     }
 
@@ -192,15 +244,34 @@ class MessageController {
         result.decision.action == RouterAction.deliverAndForward) {
       final forwarded = result.decision.forwardMessage!;
       final wire = WireCodec.encode(forwarded);
-      await Future.wait([
-        for (final peer in _transportManager.connectedPeers)
-          if (peer != payload.fromPeerId)
-            _transportManager.sendTo(peer, wire).catchError((Object e) {
-              debugPrint(
-                '[CONTROLLER] forward to $peer failed for message ${forwarded.id}: $e',
-              );
-            }),
-      ]);
+      var sent = 0;
+      for (final peer in _transportManager.connectedPeers) {
+        if (peer == payload.fromPeerId) continue;
+        try {
+          await _transportManager.sendTo(peer, wire);
+          sent++;
+        } catch (e) {
+          debugPrint(
+            '[CONTROLLER] forward to $peer failed for message ${forwarded.id}: $e',
+          );
+          _addRoutingEvent(
+            payload: 'Forward failed • ${_shortId(forwarded.id)}',
+            status: 'DROP',
+          );
+        }
+      }
+      if (sent > 0) {
+        _diagnostics = _diagnostics.copyWith(
+          maxHopDepth: forwarded.hopCount > _diagnostics.maxHopDepth
+              ? forwarded.hopCount
+              : _diagnostics.maxHopDepth,
+          forwardedMessages: _diagnostics.forwardedMessages + sent,
+        );
+        _addRoutingEvent(
+          payload: 'Gossip forwarded • ${_shortId(forwarded.id)}',
+          status: 'OK',
+        );
+      }
     }
   }
 
@@ -246,6 +317,11 @@ class MessageController {
       }
     }
 
+    _addRoutingEvent(
+      payload:
+          'Peer ${event.connected ? "connected" : "disconnected"} • ${_shortId(event.peerId)}',
+      status: event.connected ? 'OK' : 'DISC',
+    );
     _emitPeerRevision();
 
     if (event.connected) {
@@ -309,6 +385,10 @@ class MessageController {
 
     try {
       await _transportManager.sendTo(peerId, WireCodec.encode(msg));
+      _addRoutingEvent(
+        payload: 'Peer announce sent • ${_shortId(peerId)}',
+        status: 'OK',
+      );
       debugPrint('[CONTROLLER] peer announce sent to $peerId');
     } catch (e) {
       debugPrint('[CONTROLLER] peer announce failed for $peerId: $e');
@@ -386,6 +466,10 @@ class MessageController {
         await _peerRepo.updatePeerConnectionStatus(msg.senderId, true);
       }
       _emitPeerRevision();
+      _addRoutingEvent(
+        payload: 'Peer announce received • ${_shortId(msg.senderId)}',
+        status: 'OK',
+      );
     } catch (e) {
       debugPrint('MessageController: bad PEER_ANNOUNCE — $e');
     }
@@ -428,6 +512,10 @@ class MessageController {
 
     try {
       await _transportManager.sendTo(peerId, WireCodec.encode(msg));
+      _addRoutingEvent(
+        payload: 'Sync request sent • ${_shortId(peerId)}',
+        status: 'SYNC',
+      );
       debugPrint('[CONTROLLER] sync request sent to $peerId');
     } catch (e) {
       debugPrint('[CONTROLLER] sync request failed for $peerId: $e');
@@ -474,6 +562,7 @@ class MessageController {
     await _decryptedCtrl.close();
     await _peerRevisionCtrl.close();
     await _messageRevisionCtrl.close();
+    await _diagnosticsCtrl.close();
   }
 
   Future<void> trustPeer(String peerId) async {
@@ -490,4 +579,22 @@ class MessageController {
     _messageRevision++;
     _messageRevisionCtrl.add(_messageRevision);
   }
+
+  void _addRoutingEvent({
+    required String payload,
+    required String status,
+  }) {
+    final next = [
+      RoutingEvent(
+        timestamp: DateTime.now(),
+        payload: payload,
+        status: status,
+      ),
+      ..._diagnostics.routingEvents,
+    ].take(50).toList(growable: false);
+    _diagnostics = _diagnostics.copyWith(routingEvents: next);
+    _diagnosticsCtrl.add(_diagnostics);
+  }
+
+  String _shortId(String id) => id.length <= 12 ? id : id.substring(0, 12);
 }

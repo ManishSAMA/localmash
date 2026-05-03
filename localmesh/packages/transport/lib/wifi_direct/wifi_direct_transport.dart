@@ -33,6 +33,8 @@ class WifiDirectTransport implements Transport {
       StreamController<PeerEvent>.broadcast();
   final StreamController<TransportPayload> _dataCtrl =
       StreamController<TransportPayload>.broadcast();
+  final StreamController<TransportStatus> _statusCtrl =
+      StreamController<TransportStatus>.broadcast();
   
   final List<StreamSubscription> _subs = [];
   Timer? _negotiationTimer;
@@ -50,6 +52,9 @@ class WifiDirectTransport implements Transport {
   Stream<TransportPayload> get incomingData => _dataCtrl.stream;
 
   @override
+  Stream<TransportStatus> get status => _statusCtrl.stream;
+
+  @override
   List<String> get connectedPeers {
     if (_isHost) return _connectedClientIds.toList();
     if (_connectedHostId != null) return [_connectedHostId!];
@@ -63,6 +68,7 @@ class WifiDirectTransport implements Transport {
   Future<void> start() async {
     if (_state != TransportState.idle) return;
     _state = TransportState.starting;
+    _emitStatus(discoveryInProgress: true);
     debugPrint('[TRANSPORT][WIFI] starting');
 
     await _host.initialize();
@@ -126,12 +132,14 @@ class WifiDirectTransport implements Transport {
       _isHost = false;
       _connectedHostId = 'host-${device.deviceAddress}';
       _state = TransportState.running;
+      _emitStatus();
       _peerCtrl.add(PeerEvent(
         peerId: _connectedHostId!,
         displayName: device.deviceName,
         connected: true,
         transportName: 'wifi_direct',
       ));
+      _emitStatus();
     } catch (e) {
       debugPrint('[TRANSPORT][WIFI] failed to connect to host, becoming host instead: $e');
       unawaited(_becomeHost());
@@ -144,8 +152,13 @@ class WifiDirectTransport implements Transport {
     if (hostState.isActive) {
       _isHost = true;
       _state = TransportState.running;
+      _emitStatus();
     } else {
       _state = TransportState.error;
+      _emitStatus(
+        issue: TransportIssue.discoveryFailed,
+        message: 'Wi-Fi Direct group creation failed: ${hostState.failureReason}',
+      );
       debugPrint('[TRANSPORT][WIFI] failed to create group: ${hostState.failureReason}');
     }
   }
@@ -162,6 +175,7 @@ class WifiDirectTransport implements Transport {
           connected: false,
           transportName: 'wifi_direct',
         ));
+        _emitStatus();
       }
     }
 
@@ -174,6 +188,7 @@ class WifiDirectTransport implements Transport {
           connected: true,
           transportName: 'wifi_direct',
         ));
+        _emitStatus();
       }
     }
   }
@@ -189,6 +204,7 @@ class WifiDirectTransport implements Transport {
       
       // Try to restart negotiation
       _state = TransportState.starting;
+      _emitStatus(discoveryInProgress: true);
       _startNegotiation();
     }
   }
@@ -249,6 +265,7 @@ class WifiDirectTransport implements Transport {
     _state = TransportState.idle;
     _connectedClientIds.clear();
     _connectedHostId = null;
+    _emitStatus();
   }
 
   @override
@@ -256,5 +273,21 @@ class WifiDirectTransport implements Transport {
     // For WifiDirect, battery saver could reduce BLE scan frequency 
     // for host discovery, but usually it only runs during startup.
     // If we implemented continuous background scanning, we'd adjust it here.
+  }
+
+  void _emitStatus({
+    TransportIssue issue = TransportIssue.none,
+    String? message,
+    bool discoveryInProgress = false,
+  }) {
+    if (_statusCtrl.isClosed) return;
+    _statusCtrl.add(TransportStatus(
+      name: name,
+      state: _state,
+      issue: issue,
+      message: message,
+      discoveryInProgress: discoveryInProgress,
+      connectedPeers: connectedPeers,
+    ));
   }
 }

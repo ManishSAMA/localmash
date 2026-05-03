@@ -1,16 +1,15 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
+import '../controllers/message_controller.dart';
 import '../theme/app_theme.dart';
 
 /// Latency line chart — reference DIAGS screen (green trace, T-60s → NOW).
 class LatencyPerHopPanel extends StatelessWidget {
   const LatencyPerHopPanel({
     super.key,
-    this.currentMs = 24,
+    this.samples = const [],
   });
 
-  final int currentMs;
+  final List<int> samples;
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +40,7 @@ class LatencyPerHopPanel extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    'CUR: ${currentMs}ms',
+                    samples.isEmpty ? 'Not enough data' : 'CUR: ${samples.last}ms',
                     style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 10,
@@ -56,9 +55,9 @@ class LatencyPerHopPanel extends StatelessWidget {
             SizedBox(
               height: 100,
               width: double.infinity,
-              child: CustomPaint(
-                painter: _LatencyLinePainter(seed: currentMs),
-              ),
+              child: samples.isEmpty
+                  ? const Center(child: _EmptyMetricText('Not enough data'))
+                  : CustomPaint(painter: _LatencyLinePainter(samples: samples)),
             ),
             const SizedBox(height: 4),
             Row(
@@ -90,9 +89,9 @@ class LatencyPerHopPanel extends StatelessWidget {
 }
 
 class _LatencyLinePainter extends CustomPainter {
-  _LatencyLinePainter({required this.seed});
+  _LatencyLinePainter({required this.samples});
 
-  final int seed;
+  final List<int> samples;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -105,13 +104,11 @@ class _LatencyLinePainter extends CustomPainter {
     }
 
     final path = Path();
-    final rnd = math.Random(seed);
-    const n = 48;
-    for (var i = 0; i <= n; i++) {
-      final x = size.width * i / n;
-      final wave =
-          0.5 + 0.45 * math.sin(i * 0.35 + seed * 0.01) + rnd.nextDouble() * 0.08;
-      final y = size.height * (1 - wave.clamp(0.08, 0.95));
+    final maxSample = samples.reduce((a, b) => a > b ? a : b).clamp(1, 100000);
+    for (var i = 0; i < samples.length; i++) {
+      final x = samples.length == 1 ? size.width : size.width * i / (samples.length - 1);
+      final normalized = (samples[i] / maxSample).clamp(0.0, 1.0);
+      final y = size.height * (1 - normalized);
       if (i == 0) {
         path.moveTo(x, y);
       } else {
@@ -127,12 +124,14 @@ class _LatencyLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _LatencyLinePainter oldDelegate) =>
-      oldDelegate.seed != seed;
+      oldDelegate.samples != samples;
 }
 
 /// Battery drain step chart — reference (grey steps, %/hr).
 class BatteryDrainPanel extends StatelessWidget {
-  const BatteryDrainPanel({super.key});
+  const BatteryDrainPanel({super.key, this.meshImpactPercentPerHour});
+
+  final double? meshImpactPercentPerHour;
 
   @override
   Widget build(BuildContext context) {
@@ -162,8 +161,10 @@ class BatteryDrainPanel extends StatelessWidget {
                     border: Border.all(color: LocalMeshColors.borderMuted),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Text(
-                    'CUR: -2.4%',
+                  child: Text(
+                    meshImpactPercentPerHour == null
+                        ? 'Not enough data'
+                        : 'CUR: ${meshImpactPercentPerHour!.toStringAsFixed(1)}%',
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 10,
@@ -177,7 +178,13 @@ class BatteryDrainPanel extends StatelessWidget {
             SizedBox(
               height: 72,
               width: double.infinity,
-              child: CustomPaint(painter: _BatteryStepPainter()),
+              child: Center(
+                child: _EmptyMetricText(
+                  meshImpactPercentPerHour == null
+                      ? 'Not enough data'
+                      : 'Mesh impact ${meshImpactPercentPerHour!.toStringAsFixed(1)}%/hr',
+                ),
+              ),
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -207,48 +214,11 @@ class BatteryDrainPanel extends StatelessWidget {
   }
 }
 
-class _BatteryStepPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bg = Paint()
-      ..color = LocalMeshColors.borderMuted.withValues(alpha: 0.25)
-      ..strokeWidth = 0.5;
-    final h = size.height;
-    canvas.drawLine(Offset(0, h * 0.7), Offset(size.width, h * 0.7), bg);
-
-    final steps = <double>[0.85, 0.72, 0.68, 0.55, 0.52, 0.48, 0.45];
-    final seg = size.width / steps.length;
-    final paint = Paint()
-      ..color = LocalMeshColors.textSecondary.withValues(alpha: 0.85)
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-
-    for (var i = 0; i < steps.length; i++) {
-      final x0 = i * seg;
-      final x1 = (i + 1) * seg;
-      final y = h * steps[i];
-      canvas.drawLine(Offset(x0, y), Offset(x1, y), paint);
-      if (i < steps.length - 1) {
-        final yn = h * steps[i + 1];
-        canvas.drawLine(Offset(x1, y), Offset(x1, yn), paint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
 /// Routing events table — reference (TIMESTAMP / PAYLOAD / STATUS).
 class RoutingEventsLogPanel extends StatelessWidget {
-  const RoutingEventsLogPanel({super.key});
+  const RoutingEventsLogPanel({super.key, required this.events});
 
-  static const _rows = <_LogRow>[
-    _LogRow('14:32:01', 'Gossip Forwarded • MSG_ID_782', 'OK'),
-    _LogRow('14:31:58', 'Peer Discovery • NODE_A4F9', 'OK'),
-    _LogRow('14:31:44', 'Route Failure: Hop Limit Reached', 'DROP'),
-    _LogRow('14:31:40', 'Sync Request', 'SYNC'),
-  ];
+  final List<RoutingEvent> events;
 
   @override
   Widget build(BuildContext context) {
@@ -293,19 +263,18 @@ class RoutingEventsLogPanel extends StatelessWidget {
             const SizedBox(height: 10),
             const _LogHeader(),
             const Divider(height: 1, color: LocalMeshColors.borderMuted),
-            for (final r in _rows) _LogDataRow(row: r),
+            if (events.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: _EmptyMetricText('No routing events yet'),
+              )
+            else
+              for (final r in events) _LogDataRow(row: r),
           ],
         ),
       ),
     );
   }
-}
-
-class _LogRow {
-  const _LogRow(this.ts, this.payload, this.status);
-  final String ts;
-  final String payload;
-  final String status;
 }
 
 class _LogHeader extends StatelessWidget {
@@ -359,7 +328,7 @@ class _LogHeader extends StatelessWidget {
 class _LogDataRow extends StatelessWidget {
   const _LogDataRow({required this.row});
 
-  final _LogRow row;
+  final RoutingEvent row;
 
   @override
   Widget build(BuildContext context) {
@@ -379,7 +348,7 @@ class _LogDataRow extends StatelessWidget {
           SizedBox(
             width: 56,
             child: Text(
-              row.ts,
+              _formatTime(row.timestamp),
               style: const TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 9,
@@ -407,4 +376,27 @@ class _LogDataRow extends StatelessWidget {
       ),
     );
   }
+
+  String _formatTime(DateTime value) {
+    final h = value.hour.toString().padLeft(2, '0');
+    final m = value.minute.toString().padLeft(2, '0');
+    final s = value.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
+  }
+}
+
+class _EmptyMetricText extends StatelessWidget {
+  const _EmptyMetricText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          color: LocalMeshColors.textSecondary,
+        ),
+      );
 }
