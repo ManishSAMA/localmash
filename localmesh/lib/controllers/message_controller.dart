@@ -108,6 +108,12 @@ class MessageController {
   /// Start listening to transport streams. Call after TransportManager.start().
   Future<void> start() async {
     if (_started) return;
+    // Remove provisional peers left over from a previous session where a clean
+    // disconnect event was never received (e.g. crash, self-discovery stall).
+    final stale = await _peerRepo.getAllPeers();
+    for (final p in stale.where((p) => p.signingPublicKey.isEmpty)) {
+      await _peerRepo.removePeer(p.id);
+    }
     _dataSub = _transportManager.incomingData.listen(_handleIncoming);
     _peerSub = _transportManager.peerEvents.listen(_handlePeerEvent);
     _started = true;
@@ -324,6 +330,21 @@ class MessageController {
         debugPrint(
           'MessageController: rejecting PEER_ANNOUNCE with mismatched fingerprint',
         );
+        return;
+      }
+
+      // Self-discovery: our own GATT advertisement reflected back by BLE scan.
+      final me = await _identityRepo.getIdentity();
+      if (me != null && computedFingerprint == me.fingerprint) {
+        debugPrint(
+          '[CONTROLLER] self-announce detected for $transportPeerId — discarding',
+        );
+        _pendingConnectedTransportPeers.remove(transportPeerId);
+        final provisional = await _peerRepo.getPeerById(transportPeerId);
+        if (provisional != null && provisional.signingPublicKey.isEmpty) {
+          await _peerRepo.removePeer(transportPeerId);
+        }
+        _emitPeerRevision();
         return;
       }
 
