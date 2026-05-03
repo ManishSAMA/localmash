@@ -29,13 +29,13 @@ Future<void> setupServiceLocator() async {
 
   // Transport
   getIt.registerLazySingleton<BleTransport>(
-    () => BleTransport(myDeviceName: 'LocalMesh'),
+    () => BleTransport(myDeviceName: 'Node'),
   );
   getIt.registerLazySingleton<WifiDirectTransport>(
-    () => WifiDirectTransport(myDeviceName: 'LocalMesh'),
+    () => WifiDirectTransport(myDeviceName: 'Node'),
   );
   getIt.registerLazySingleton<TcpLanTransport>(
-    () => TcpLanTransport(myDeviceName: 'LocalMesh'),
+    () => TcpLanTransport(myDeviceName: 'Node'),
   );
   getIt.registerLazySingleton<TransportManager>(
     () => TransportManager([

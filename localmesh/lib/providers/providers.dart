@@ -130,6 +130,21 @@ final meshDiagnosticsProvider = StreamProvider<MeshDiagnostics>(
   },
 );
 
+final peerHandshakeStatesProvider =
+    StreamProvider<Map<String, PeerHandshakeState>>(
+  (ref) async* {
+    final ctrl = await getIt.getAsync<MessageController>();
+    yield* ctrl.handshakeStates;
+  },
+);
+
+final meshTopologyProvider = StreamProvider<MeshTopologySnapshot>(
+  (ref) async* {
+    final ctrl = await getIt.getAsync<MessageController>();
+    yield* ctrl.topology;
+  },
+);
+
 // ── Use case providers ──
 final createIdentityProvider = Provider<CreateIdentity>(
   (ref) => getIt<CreateIdentity>(),

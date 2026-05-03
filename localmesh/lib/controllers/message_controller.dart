@@ -18,6 +18,53 @@ class RoutingEvent {
   final String status;
 }
 
+enum PeerHandshakeState {
+  discovered,
+  connecting,
+  announced,
+  keyExchangeStarted,
+  keyExchangeConfirmed,
+  sessionEstablished,
+  trustPending,
+  verified,
+  failed,
+}
+
+class MeshLink {
+  const MeshLink({
+    required this.fromId,
+    required this.toId,
+    required this.active,
+    required this.relay,
+    required this.lastSeen,
+  });
+
+  final String fromId;
+  final String toId;
+  final bool active;
+  final bool relay;
+  final DateTime lastSeen;
+
+  String get key {
+    final ids = [fromId, toId]..sort();
+    return '${ids[0]}:${ids[1]}';
+  }
+}
+
+class MeshTopologySnapshot {
+  const MeshTopologySnapshot({
+    required this.localId,
+    required this.localName,
+    required this.nodes,
+    required this.links,
+  });
+
+  final String localId;
+  final String localName;
+  final Map<String, String> nodes;
+  final List<MeshLink> links;
+}
+
 class MeshDiagnostics {
   const MeshDiagnostics({
     this.maxHopDepth = 0,
@@ -99,11 +146,21 @@ class MessageController {
   final Map<String, String> _transportPeerToIdentity = {};
   final Map<String, String> _identityToTransportPeer = {};
   final Set<String> _pendingConnectedTransportPeers = <String>{};
+  final Map<String, PeerHandshakeState> _handshakeStates = {};
+  final Map<String, int> _handshakeAttempts = {};
+  final Map<String, Timer> _handshakeTimers = {};
+  final Map<String, MeshLink> _topologyLinks = {};
+  final StreamController<Map<String, PeerHandshakeState>> _handshakeCtrl =
+      StreamController<Map<String, PeerHandshakeState>>.broadcast();
+  final StreamController<MeshTopologySnapshot> _topologyCtrl =
+      StreamController<MeshTopologySnapshot>.broadcast();
   int _peerRevision = 0;
   int _messageRevision = 0;
   MeshDiagnostics _diagnostics = const MeshDiagnostics();
 
   static const int _kPlaintextCacheMax = 1000;
+  static const int _kMaxHandshakeRetries = 2;
+  static const Duration _kHandshakeTimeout = Duration(seconds: 10);
 
   /// Stream of successfully decrypted messages for UI consumption.
   Stream<DecryptedMessage> get decryptedMessages => _decryptedCtrl.stream;
@@ -112,6 +169,15 @@ class MessageController {
   Stream<MeshDiagnostics> get diagnostics async* {
     yield _diagnostics;
     yield* _diagnosticsCtrl.stream;
+  }
+  Stream<Map<String, PeerHandshakeState>> get handshakeStates async* {
+    yield Map.unmodifiable(_handshakeStates);
+    yield* _handshakeCtrl.stream;
+  }
+
+  Stream<MeshTopologySnapshot> get topology async* {
+    yield await _buildTopologySnapshot();
+    yield* _topologyCtrl.stream;
   }
 
   String? cachedPlaintextFor(String messageId) => _plaintextCache[messageId];
@@ -219,6 +285,14 @@ class MessageController {
       await _handlePeerAnnounce(msg, payload.fromPeerId);
       // Announces also flow through router for potential forwarding
     }
+    if (msg.type == MessageType.keyExchangeStart) {
+      await _handleKeyExchangeStart(msg, payload.fromPeerId);
+      return;
+    }
+    if (msg.type == MessageType.keyExchangeConfirm) {
+      await _handleKeyExchangeConfirm(msg, payload.fromPeerId);
+      return;
+    }
 
     final result = await _receiveMessage(msg);
 
@@ -250,6 +324,7 @@ class MessageController {
         try {
           await _transportManager.sendTo(peer, wire);
           sent++;
+          unawaited(_recordRelayLink(payload.fromPeerId, peer));
         } catch (e) {
           debugPrint(
             '[CONTROLLER] forward to $peer failed for message ${forwarded.id}: $e',
@@ -283,17 +358,20 @@ class MessageController {
 
     if (event.connected) {
       _pendingConnectedTransportPeers.add(event.peerId);
+      _setHandshakeState(event.peerId, PeerHandshakeState.connecting);
 
       // Create provisional peer so UI shows it immediately in Nearby section,
       // even before PEER_ANNOUNCE exchange completes.
       if (!_transportPeerToIdentity.containsKey(event.peerId)) {
         final existing = await _peerRepo.getPeerById(event.peerId);
         if (existing == null) {
+          final label = _resolvedDeviceLabel(
+            rawName: event.displayName,
+            stableId: event.peerId,
+          );
           final provisional = Peer(
             id: event.peerId,
-            displayName: (event.displayName?.isNotEmpty == true)
-                ? event.displayName!
-                : 'Nearby Device',
+            displayName: label,
             signingPublicKey: const [],
             encryptionPublicKey: const [],
             lastSeen: DateTime.now().millisecondsSinceEpoch,
@@ -309,7 +387,11 @@ class MessageController {
       if (identityPeerId != null) {
         _identityToTransportPeer.remove(identityPeerId);
         await _peerRepo.updatePeerConnectionStatus(identityPeerId, false);
+        _handshakeTimers.remove(identityPeerId)?.cancel();
+        _setHandshakeState(identityPeerId, PeerHandshakeState.discovered);
+        _removeActiveLink(identityPeerId);
       }
+      _handshakeTimers.remove(event.peerId)?.cancel();
       // Clean up stale provisional peer on disconnect
       final provisional = await _peerRepo.getPeerById(event.peerId);
       if (provisional != null && provisional.signingPublicKey.isEmpty) {
@@ -326,7 +408,6 @@ class MessageController {
 
     if (event.connected) {
       await _sendPeerAnnounceTo(event.peerId);
-      await _sendSyncRequestTo(event.peerId);
       // Retry announce after 4 s in case of BLE packet loss
       _scheduleAnnounceRetry(event.peerId);
     }
@@ -355,12 +436,12 @@ class MessageController {
     final me = await _identityRepo.getIdentity();
     if (me == null) return;
 
-    // Payload: [sigPub(32)][encPub(32)][displayName UTF-8]
-    final nameBytes = utf8.encode(me.displayName);
-    final buf = BytesBuilder();
-    buf.add(me.signingPublicKey);
-    buf.add(me.encryptionPublicKey);
-    buf.add(nameBytes);
+    final payload = jsonEncode({
+      'v': 2,
+      'sig': base64Encode(me.signingPublicKey),
+      'enc': base64Encode(me.encryptionPublicKey),
+      'name': _validIdentityName(me.displayName, me.fingerprint),
+    });
 
     var msg = LocalMeshMessage(
       id: 'announce-${me.fingerprint}-${DateTime.now().microsecondsSinceEpoch}',
@@ -368,7 +449,7 @@ class MessageController {
       type: MessageType.peerAnnounce,
       senderId: me.fingerprint,
       recipientId: '*',
-      payload: buf.toBytes(),
+      payload: Uint8List.fromList(utf8.encode(payload)),
       hopCount: 0,
       ttl: 2,
       lamportTs: DateTime.now().millisecondsSinceEpoch,
@@ -399,11 +480,16 @@ class MessageController {
     LocalMeshMessage msg,
     String transportPeerId,
   ) async {
-    if (msg.payload.length < 64) return;
     try {
-      final sigPub = List<int>.from(msg.payload.sublist(0, 32));
-      final encPub = List<int>.from(msg.payload.sublist(32, 64));
-      final name = utf8.decode(msg.payload.sublist(64));
+      final parsed = _parseAnnouncePayload(msg.payload);
+      if (parsed == null) return;
+      final sigPub = parsed.signingPublicKey;
+      final encPub = parsed.encryptionPublicKey;
+      final name = _validPeerName(
+        announcedName: parsed.displayName,
+        transportName: null,
+        stableId: msg.senderId,
+      );
       final computedFingerprint =
           await _identityGenerator.computeFingerprint(sigPub);
       if (computedFingerprint != msg.senderId) {
@@ -465,14 +551,151 @@ class MessageController {
       if (_pendingConnectedTransportPeers.contains(transportPeerId)) {
         await _peerRepo.updatePeerConnectionStatus(msg.senderId, true);
       }
+      unawaited(_recordActiveLink(msg.senderId));
+      _setHandshakeState(msg.senderId, PeerHandshakeState.announced);
       _emitPeerRevision();
       _addRoutingEvent(
         payload: 'Peer announce received • ${_shortId(msg.senderId)}',
         status: 'OK',
       );
+      await _maybeStartDeterministicHandshake(msg.senderId);
     } catch (e) {
       debugPrint('MessageController: bad PEER_ANNOUNCE — $e');
     }
+  }
+
+  Future<void> _maybeStartDeterministicHandshake(String peerId) async {
+    final me = await _identityRepo.getIdentity();
+    if (me == null) return;
+    final peer = await _peerRepo.getPeerById(peerId);
+    if (peer == null || peer.signingPublicKey.isEmpty) return;
+    if (peer.isTrusted) {
+      _setHandshakeState(peerId, PeerHandshakeState.verified);
+      return;
+    }
+    if (me.fingerprint.compareTo(peerId) < 0) {
+      await _sendKeyExchangeStart(peerId);
+    }
+  }
+
+  Future<void> _sendKeyExchangeStart(String peerId) async {
+    final attempts = _handshakeAttempts[peerId] ?? 0;
+    if (attempts > _kMaxHandshakeRetries) {
+      await _failHandshake(peerId);
+      return;
+    }
+    _handshakeAttempts[peerId] = attempts + 1;
+    _setHandshakeState(peerId, PeerHandshakeState.keyExchangeStarted);
+    try {
+      await _sendControl(peerId, MessageType.keyExchangeStart);
+    } catch (e) {
+      debugPrint('[CONTROLLER] key exchange start failed for $peerId: $e');
+    }
+    _armHandshakeTimeout(peerId, () => _sendKeyExchangeStart(peerId));
+  }
+
+  Future<void> _handleKeyExchangeStart(
+    LocalMeshMessage msg,
+    String transportPeerId,
+  ) async {
+    final me = await _identityRepo.getIdentity();
+    if (me == null) return;
+    final peer = await _peerRepo.getPeerById(msg.senderId);
+    if (peer == null || peer.signingPublicKey.isEmpty) return;
+    if (!await _verifyControlMessage(msg, peer)) return;
+    if (me.fingerprint.compareTo(msg.senderId) < 0) {
+      return;
+    }
+    _transportPeerToIdentity[transportPeerId] = msg.senderId;
+    _identityToTransportPeer[msg.senderId] = transportPeerId;
+    _setHandshakeState(msg.senderId, PeerHandshakeState.keyExchangeStarted);
+    await _sendControl(msg.senderId, MessageType.keyExchangeConfirm);
+    await _establishSession(msg.senderId);
+  }
+
+  Future<void> _handleKeyExchangeConfirm(
+    LocalMeshMessage msg,
+    String transportPeerId,
+  ) async {
+    final peer = await _peerRepo.getPeerById(msg.senderId);
+    if (peer == null || peer.signingPublicKey.isEmpty) return;
+    if (!await _verifyControlMessage(msg, peer)) return;
+    _transportPeerToIdentity[transportPeerId] = msg.senderId;
+    _identityToTransportPeer[msg.senderId] = transportPeerId;
+    _setHandshakeState(msg.senderId, PeerHandshakeState.keyExchangeConfirmed);
+    await _establishSession(msg.senderId);
+  }
+
+  Future<bool> _verifyControlMessage(LocalMeshMessage msg, Peer peer) async {
+    return _signer.verify(
+      message: msg,
+      signingPublicKey: peer.signingPublicKey,
+    );
+  }
+
+  Future<void> _establishSession(String peerId) async {
+    _handshakeTimers.remove(peerId)?.cancel();
+    _setHandshakeState(peerId, PeerHandshakeState.sessionEstablished);
+    final peer = await _peerRepo.getPeerById(peerId);
+    _setHandshakeState(
+      peerId,
+      peer?.isTrusted == true
+          ? PeerHandshakeState.verified
+          : PeerHandshakeState.trustPending,
+    );
+    await _peerRepo.updatePeerConnectionStatus(peerId, true);
+    final transportPeerId = _identityToTransportPeer[peerId];
+    if (transportPeerId != null) await _sendSyncRequestTo(transportPeerId);
+    _emitPeerRevision();
+  }
+
+  Future<void> _sendControl(String peerId, MessageType type) async {
+    final me = await _identityRepo.getIdentity();
+    if (me == null) return;
+    final transportPeerId = _identityToTransportPeer[peerId] ?? peerId;
+    var msg = LocalMeshMessage(
+      id: '${type.name}-${me.fingerprint}-${DateTime.now().microsecondsSinceEpoch}',
+      version: 1,
+      type: type,
+      senderId: me.fingerprint,
+      recipientId: peerId,
+      payload: Uint8List(0),
+      hopCount: 0,
+      ttl: 1,
+      lamportTs: DateTime.now().millisecondsSinceEpoch,
+      signature: const [],
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    final sig = await _signer.sign(
+      message: msg,
+      signingPrivateKey: me.signingPrivateKey,
+      signingPublicKey: me.signingPublicKey,
+    );
+    msg = msg.copyWith(signature: sig);
+    await _transportManager.sendTo(transportPeerId, WireCodec.encode(msg));
+  }
+
+  void _armHandshakeTimeout(String peerId, Future<void> Function() retry) {
+    _handshakeTimers.remove(peerId)?.cancel();
+    _handshakeTimers[peerId] = Timer(_kHandshakeTimeout, () async {
+      if (_handshakeStates[peerId] == PeerHandshakeState.trustPending ||
+          _handshakeStates[peerId] == PeerHandshakeState.verified) {
+        return;
+      }
+      final attempts = _handshakeAttempts[peerId] ?? 0;
+      if (attempts <= _kMaxHandshakeRetries) {
+        await retry();
+      } else {
+        await _failHandshake(peerId);
+      }
+    });
+  }
+
+  Future<void> _failHandshake(String peerId) async {
+    _handshakeTimers.remove(peerId)?.cancel();
+    _setHandshakeState(peerId, PeerHandshakeState.failed);
+    await _peerRepo.updatePeerConnectionStatus(peerId, false);
+    _emitPeerRevision();
   }
 
   // ── Sync protocol ─────────────────────────────────────────────────────────
@@ -563,10 +786,13 @@ class MessageController {
     await _peerRevisionCtrl.close();
     await _messageRevisionCtrl.close();
     await _diagnosticsCtrl.close();
+    await _handshakeCtrl.close();
+    await _topologyCtrl.close();
   }
 
   Future<void> trustPeer(String peerId) async {
     await _peerRepo.trustPeer(peerId);
+    _setHandshakeState(peerId, PeerHandshakeState.verified);
     _emitPeerRevision();
   }
 
@@ -597,4 +823,149 @@ class MessageController {
   }
 
   String _shortId(String id) => id.length <= 12 ? id : id.substring(0, 12);
+
+  void _setHandshakeState(String peerId, PeerHandshakeState state) {
+    _handshakeStates[peerId] = state;
+    _handshakeCtrl.add(Map.unmodifiable(_handshakeStates));
+  }
+
+  Future<void> _recordActiveLink(String peerId) async {
+    final me = await _identityRepo.getIdentity();
+    if (me == null) return;
+    final link = MeshLink(
+      fromId: me.fingerprint,
+      toId: peerId,
+      active: true,
+      relay: false,
+      lastSeen: DateTime.now(),
+    );
+    _topologyLinks[link.key] = link;
+    _topologyCtrl.add(await _buildTopologySnapshot());
+  }
+
+  Future<void> _recordRelayLink(String fromTransportId, String toTransportId) async {
+    final from = _transportPeerToIdentity[fromTransportId] ?? fromTransportId;
+    final to = _transportPeerToIdentity[toTransportId] ?? toTransportId;
+    if (from == to) return;
+    final link = MeshLink(
+      fromId: from,
+      toId: to,
+      active: false,
+      relay: true,
+      lastSeen: DateTime.now(),
+    );
+    _topologyLinks[link.key] = link;
+    _topologyCtrl.add(await _buildTopologySnapshot());
+  }
+
+  void _removeActiveLink(String peerId) {
+    _topologyLinks.removeWhere((_, link) =>
+        link.active && (link.fromId == peerId || link.toId == peerId));
+    unawaited(_buildTopologySnapshot().then(_topologyCtrl.add));
+  }
+
+  Future<MeshTopologySnapshot> _buildTopologySnapshot() async {
+    final me = await _identityRepo.getIdentity();
+    final localId = me?.fingerprint ?? 'local';
+    final nodes = <String, String>{
+      localId: me == null ? 'This node' : _validIdentityName(me.displayName, localId),
+    };
+    for (final peer in await _peerRepo.getAllPeers()) {
+      if (peer.signingPublicKey.isEmpty &&
+          _handshakeStates[peer.id] != PeerHandshakeState.failed) {
+        continue;
+      }
+      nodes[peer.id] = _validPeerName(
+        announcedName: peer.displayName,
+        transportName: null,
+        stableId: peer.id,
+      );
+    }
+    for (final link in _topologyLinks.values) {
+      nodes.putIfAbsent(link.fromId, () => _fallbackNodeName(link.fromId));
+      nodes.putIfAbsent(link.toId, () => _fallbackNodeName(link.toId));
+    }
+    return MeshTopologySnapshot(
+      localId: localId,
+      localName: nodes[localId]!,
+      nodes: Map.unmodifiable(nodes),
+      links: List.unmodifiable(_topologyLinks.values),
+    );
+  }
+
+  _AnnouncePayload? _parseAnnouncePayload(List<int> payload) {
+    try {
+      final json = jsonDecode(utf8.decode(payload)) as Map<String, dynamic>;
+      final sig = base64Decode(json['sig'] as String);
+      final enc = base64Decode(json['enc'] as String);
+      if (sig.length != 32 || enc.length != 32) return null;
+      return _AnnouncePayload(
+        signingPublicKey: sig,
+        encryptionPublicKey: enc,
+        displayName: json['name'] as String?,
+      );
+    } catch (_) {
+      if (payload.length < 64) return null;
+      return _AnnouncePayload(
+        signingPublicKey: List<int>.from(payload.sublist(0, 32)),
+        encryptionPublicKey: List<int>.from(payload.sublist(32, 64)),
+        displayName: utf8.decode(payload.sublist(64), allowMalformed: true),
+      );
+    }
+  }
+
+  String _validIdentityName(String name, String stableId) {
+    final cleaned = name.trim();
+    if (_isBadName(cleaned)) return _fallbackNodeName(stableId);
+    return cleaned;
+  }
+
+  String _validPeerName({
+    required String? announcedName,
+    required String? transportName,
+    required String stableId,
+  }) {
+    for (final candidate in [announcedName, transportName]) {
+      final cleaned = candidate?.trim() ?? '';
+      if (!_isBadName(cleaned)) return cleaned;
+    }
+    return _fallbackNodeName(stableId);
+  }
+
+  String _resolvedDeviceLabel({required String? rawName, required String stableId}) {
+    return _validPeerName(
+      announcedName: null,
+      transportName: rawName,
+      stableId: stableId,
+    );
+  }
+
+  bool _isBadName(String name) {
+    if (name.isEmpty) return true;
+    final normalized = name.toLowerCase();
+    return normalized == 'localmesh' ||
+        normalized == 'unknown' ||
+        normalized == 'null';
+  }
+
+  String _fallbackNodeName(String stableId) {
+    final cleaned = stableId.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+    final suffixSource = cleaned.isNotEmpty ? cleaned : stableId;
+    final suffix = suffixSource.length <= 4
+        ? suffixSource
+        : suffixSource.substring(suffixSource.length - 4);
+    return 'Node-${suffix.toUpperCase()}';
+  }
+}
+
+class _AnnouncePayload {
+  const _AnnouncePayload({
+    required this.signingPublicKey,
+    required this.encryptionPublicKey,
+    required this.displayName,
+  });
+
+  final List<int> signingPublicKey;
+  final List<int> encryptionPublicKey;
+  final String? displayName;
 }

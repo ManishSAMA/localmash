@@ -48,6 +48,7 @@ class NetworkHealthBody extends ConsumerWidget {
     final manager = ref.watch(transportManagerProvider);
     final peersAsync = ref.watch(allPeersProvider);
     final diagnosticsAsync = ref.watch(meshDiagnosticsProvider);
+    final topologyAsync = ref.watch(meshTopologyProvider);
     ref.watch(transportStatusesProvider);
     ref.watch(peerEventsProvider);
     final scheme = Theme.of(context).colorScheme;
@@ -98,7 +99,17 @@ class NetworkHealthBody extends ConsumerWidget {
                   ],
                 ),
                 const SizedBox(height: 8),
-                MeshTopologyCanvas(peers: peers, minHeight: 200),
+                topologyAsync.when(
+                  loading: () => const SizedBox(
+                    height: 200,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                  error: (_, __) => const SizedBox.shrink(),
+                  data: (topology) => MeshTopologyCanvas(
+                    topology: topology,
+                    minHeight: 200,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 const Text(
                   'SCANNING FREQUENCY: 2.4GHZ • BLE / WFD / LAN',

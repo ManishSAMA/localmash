@@ -7,6 +7,8 @@ enum MessageType {
   syncRequest,
   syncResponse,
   peerAnnounce,
+  keyExchangeStart,
+  keyExchangeConfirm,
 }
 
 /// The set of [MessageType] values that carry user-visible content.

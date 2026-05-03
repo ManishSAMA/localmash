@@ -132,7 +132,7 @@ class WifiDirectTransport implements Transport {
       _isHost = false;
       _connectedHostId = 'host-${device.deviceAddress}';
       _state = TransportState.running;
-      _emitStatus();
+      _emitStatus(discoveryInProgress: false);
       _peerCtrl.add(PeerEvent(
         peerId: _connectedHostId!,
         displayName: device.deviceName,
@@ -152,7 +152,7 @@ class WifiDirectTransport implements Transport {
     if (hostState.isActive) {
       _isHost = true;
       _state = TransportState.running;
-      _emitStatus();
+      _emitStatus(discoveryInProgress: false);
     } else {
       _state = TransportState.error;
       _emitStatus(

@@ -13,7 +13,7 @@ const int _udpPort = 45679;
 /// Works on any shared IP network: same WiFi router, hotspot, USB tethering.
 /// No extra packages — pure dart:io.
 class TcpLanTransport implements Transport {
-  TcpLanTransport({String myDeviceName = 'LocalMesh'})
+  TcpLanTransport({String myDeviceName = 'Node'})
       : _myDeviceName = myDeviceName;
 
   final String _myDeviceName;
@@ -89,7 +89,7 @@ class TcpLanTransport implements Transport {
       _sendBeacon();
 
       _state = TransportState.running;
-      _emitStatus(discoveryInProgress: true);
+      _emitStatus(discoveryInProgress: false);
       debugPrint('[LAN] started — TCP:$_tcpPort UDP:$_udpPort');
     } catch (e) {
       _state = TransportState.error;

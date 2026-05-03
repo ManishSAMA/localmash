@@ -84,7 +84,7 @@ class LocalMeshBleGattServer(private val context: Context) :
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "start" -> {
-                val localName = call.argument<String>("localName") ?: "LocalMesh"
+                val localName = call.argument<String>("localName") ?: "Node"
                 result.success(start(localName))
             }
 

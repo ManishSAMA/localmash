@@ -66,7 +66,7 @@ class BleTransport implements Transport {
   Future<void> start() async {
     if (_state == TransportState.running || _state == TransportState.starting) return;
     _state = TransportState.starting;
-    _emitStatus(discoveryInProgress: true);
+    _emitStatus(discoveryInProgress: false);
     debugPrint('[TRANSPORT][BLE] starting transport for "$myDeviceName"');
     await _bleStatusSub?.cancel();
     _bleStatusSub = _ble.statusStream.listen(_handleBleStatus);
@@ -156,7 +156,7 @@ class BleTransport implements Transport {
           connected: true,
           reason: 'central-connected',
         );
-        _emitStatus(discoveryInProgress: _state == TransportState.running);
+        _emitStatus(discoveryInProgress: false);
         await _subscribeToRxCharacteristic(device.id);
       } else if (update.connectionState == DeviceConnectionState.disconnected) {
         peer.connectionInProgress = false;
@@ -167,7 +167,7 @@ class BleTransport implements Transport {
           connected: false,
           reason: 'central-disconnected',
         );
-        _emitStatus(discoveryInProgress: _state == TransportState.running);
+        _emitStatus(discoveryInProgress: false);
       }
     }, onError: (Object e) {
       peer.connectionInProgress = false;
@@ -277,7 +277,7 @@ class BleTransport implements Transport {
     
     // Restart scan with new mode
     await _scanSub?.cancel();
-    _emitStatus(discoveryInProgress: true);
+    _emitStatus(discoveryInProgress: false);
     _scanSub = _ble.scanForDevices(
       withServices: [Uuid.parse(_serviceUuid)],
       scanMode: enabled ? ScanMode.lowPower : ScanMode.lowLatency,
@@ -368,7 +368,7 @@ class BleTransport implements Transport {
         '[TRANSPORT][BLE] peripheral connection established from ${event.peerId}',
       );
       _emitPeerEvent(peer, connected: true, reason: 'peripheral-connected');
-      _emitStatus(discoveryInProgress: _state == TransportState.running);
+      _emitStatus(discoveryInProgress: false);
       return;
     }
 
@@ -378,7 +378,7 @@ class BleTransport implements Transport {
         '[TRANSPORT][BLE] peripheral connection disconnected from ${event.peerId}',
       );
       _emitPeerEvent(peer, connected: false, reason: 'peripheral-disconnected');
-      _emitStatus(discoveryInProgress: _state == TransportState.running);
+      _emitStatus(discoveryInProgress: false);
       return;
     }
 

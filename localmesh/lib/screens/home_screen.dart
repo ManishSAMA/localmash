@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
+import '../controllers/message_controller.dart';
 import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../widgets/mesh_topology_canvas.dart';
@@ -122,6 +123,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final nearbyAsync = ref.watch(nearbyPeersProvider);
     final chatsAsync = ref.watch(connectedPeersProvider);
+    final topologyAsync = ref.watch(meshTopologyProvider);
     final statusesAsync = ref.watch(transportStatusesProvider);
     final diagnosticsAsync = ref.watch(meshDiagnosticsProvider);
     final runtime = _runtimeStatus(statusesAsync.valueOrNull ?? const []);
@@ -246,6 +248,7 @@ class _DashboardTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
+    final topologyAsync = ref.watch(meshTopologyProvider);
 
     return CustomScrollView(
       slivers: [
@@ -387,10 +390,10 @@ class _DashboardTab extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  nearbyAsync.when(
+                  topologyAsync.when(
                     loading: () => const SizedBox.shrink(),
                     error: (_, __) => const SizedBox.shrink(),
-                    data: (peers) => MeshTopologyCanvas(peers: peers),
+                    data: (topology) => MeshTopologyCanvas(topology: topology),
                   ),
                 ],
               ),
@@ -545,6 +548,8 @@ class _NearbySliver extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
+    final states = ref.watch(peerHandshakeStatesProvider).valueOrNull ??
+        const <String, PeerHandshakeState>{};
     return nearbyAsync.when(
       loading: () => const SliverToBoxAdapter(
         child: Padding(
@@ -577,7 +582,13 @@ class _NearbySliver extends ConsumerWidget {
           delegate: SliverChildBuilderDelegate(
             (context, i) {
               final p = peers[i];
-              final isProvisional = p.signingPublicKey.isEmpty;
+              final state = states[p.id] ??
+                  (p.signingPublicKey.isEmpty
+                      ? PeerHandshakeState.connecting
+                      : PeerHandshakeState.trustPending);
+              final isProvisional = p.signingPublicKey.isEmpty &&
+                  state != PeerHandshakeState.failed;
+              final isFailed = state == PeerHandshakeState.failed;
               final initials = p.displayName.isNotEmpty
                   ? p.displayName[0].toUpperCase()
                   : '?';
@@ -596,10 +607,15 @@ class _NearbySliver extends ConsumerWidget {
                               color: scheme.onSecondaryContainer,
                             ),
                           )
-                        : Text(
-                            initials,
-                            style: TextStyle(color: scheme.onSecondaryContainer),
-                          ),
+                        : isFailed
+                            ? Icon(Icons.error_outline,
+                                color: scheme.onSecondaryContainer, size: 18)
+                            : Text(
+                                initials,
+                                style: TextStyle(
+                                  color: scheme.onSecondaryContainer,
+                                ),
+                              ),
                   ),
                   title: Text(
                     p.displayName.isNotEmpty
@@ -610,7 +626,9 @@ class _NearbySliver extends ConsumerWidget {
                   subtitle: Text(
                     isProvisional
                         ? 'Exchanging keys…'
-                        : 'LAST SEEN • ${_formatLastSeen(p.lastSeen)}',
+                        : isFailed
+                            ? 'KEY EXCHANGE FAILED'
+                            : 'LAST SEEN • ${_formatLastSeen(p.lastSeen)}',
                     style: const TextStyle(fontSize: 11),
                   ),
                   trailing: radio == null
@@ -633,7 +651,7 @@ class _NearbySliver extends ConsumerWidget {
                             ),
                           ),
                         ),
-                  onTap: isProvisional
+                  onTap: isProvisional || isFailed
                       ? null
                       : () => showDialog<void>(
                             context: context,

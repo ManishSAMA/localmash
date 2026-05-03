@@ -1,61 +1,30 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:domain/domain.dart';
+import '../controllers/message_controller.dart';
 import '../theme/app_theme.dart';
 
-/// Dark map-style mesh view: nodes + active (green) / inactive (dashed) links.
 class MeshTopologyCanvas extends StatelessWidget {
   const MeshTopologyCanvas({
     super.key,
-    required this.peers,
+    required this.topology,
     this.minHeight = 220,
   });
 
-  final List<Peer> peers;
+  final MeshTopologySnapshot topology;
   final double minHeight;
 
   @override
   Widget build(BuildContext context) {
-    if (peers.isEmpty) {
-      return LayoutBuilder(
-        builder: (context, c) {
-          final w = c.maxWidth;
-          final h = math.max(minHeight, 200.0);
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: CustomPaint(
-              size: Size(w, h),
-              painter: const _EmptyTopologyPainter(),
-              child: SizedBox(
-                width: w,
-                height: h,
-                child: const Center(
-                  child: Text(
-                    'No topology data',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      color: LocalMeshColors.textSecondary,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      );
-    }
     return LayoutBuilder(
       builder: (context, c) {
         final w = c.maxWidth;
         final h = math.max(minHeight, 200.0);
         return ClipRRect(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(8),
           child: CustomPaint(
             size: Size(w, h),
-            painter: _MeshTopologyPainter(
-              peerCount: peers.length,
-            ),
+            painter: _MeshTopologyPainter(topology),
             child: SizedBox(width: w, height: h),
           ),
         );
@@ -64,14 +33,84 @@ class MeshTopologyCanvas extends StatelessWidget {
   }
 }
 
-class _EmptyTopologyPainter extends CustomPainter {
-  const _EmptyTopologyPainter();
+class _MeshTopologyPainter extends CustomPainter {
+  _MeshTopologyPainter(this.topology);
+
+  final MeshTopologySnapshot topology;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bg = Paint()..color = LocalMeshColors.background;
-    canvas.drawRect(Offset.zero & size, bg);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = LocalMeshColors.background,
+    );
+    _drawGrid(canvas, size);
 
+    final ids = topology.nodes.keys.toList(growable: false);
+    if (ids.isEmpty) return;
+
+    final positions = _layout(ids, size);
+    final active = Paint()
+      ..color = LocalMeshColors.accent
+      ..strokeWidth = 2.2
+      ..style = PaintingStyle.stroke;
+    final relay = Paint()
+      ..color = LocalMeshColors.textSecondary.withValues(alpha: 0.7)
+      ..strokeWidth = 1.3
+      ..style = PaintingStyle.stroke;
+
+    for (final link in topology.links) {
+      final a = positions[link.fromId];
+      final b = positions[link.toId];
+      if (a == null || b == null) continue;
+      if (link.active) {
+        canvas.drawLine(a, b, active);
+      } else if (link.relay) {
+        _drawDashedLine(canvas, a, b, relay);
+      }
+    }
+
+    for (final id in ids) {
+      final p = positions[id]!;
+      final isLocal = id == topology.localId;
+      final isolated = !topology.links.any((l) => l.fromId == id || l.toId == id);
+      final fill = Paint()
+        ..color = isLocal ? LocalMeshColors.accent : LocalMeshColors.surfaceCard;
+      final edge = Paint()
+        ..color = isolated
+            ? LocalMeshColors.textSecondary.withValues(alpha: 0.55)
+            : LocalMeshColors.accent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = isLocal ? 2.4 : 1.6;
+      canvas.drawCircle(p, isLocal ? 8 : 7, fill);
+      canvas.drawCircle(p, isLocal ? 8 : 7, edge);
+      _drawLabel(
+        canvas,
+        topology.nodes[id] ?? id,
+        Offset(p.dx, p.dy + 14),
+        isLocal ? LocalMeshColors.accent : LocalMeshColors.textSecondary,
+      );
+    }
+  }
+
+  Map<String, Offset> _layout(List<String> ids, Size size) {
+    final center = Offset(size.width * 0.5, size.height * 0.48);
+    if (ids.length == 1) return {ids.first: center};
+
+    final result = <String, Offset>{topology.localId: center};
+    final others = ids.where((id) => id != topology.localId).toList();
+    final radius = math.min(size.width, size.height) * 0.34;
+    for (var i = 0; i < others.length; i++) {
+      final angle = (i / others.length) * 2 * math.pi - math.pi / 2;
+      result[others[i]] = Offset(
+        center.dx + radius * math.cos(angle),
+        center.dy + radius * 0.78 * math.sin(angle),
+      );
+    }
+    return result;
+  }
+
+  void _drawGrid(Canvas canvas, Size size) {
     final grid = Paint()
       ..color = LocalMeshColors.borderMuted.withValues(alpha: 0.25)
       ..strokeWidth = 0.5;
@@ -84,145 +123,36 @@ class _EmptyTopologyPainter extends CustomPainter {
     }
   }
 
-  @override
-  bool shouldRepaint(covariant _EmptyTopologyPainter oldDelegate) => false;
-}
-
-class _MeshTopologyPainter extends CustomPainter {
-  _MeshTopologyPainter({required this.peerCount});
-
-  final int peerCount;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bg = Paint()..color = LocalMeshColors.background;
-    canvas.drawRect(Offset.zero & size, bg);
-
-    // Map-like desaturated wash (reference: dark map under mesh)
-    final wash = Paint()
-      ..color = const Color(0xFF1c2838).withValues(alpha: 0.55);
-    canvas.drawRect(Offset.zero & size, wash);
-
-    // Faint area labels (decorative — matches reference map overlay)
-    void drawPlace(String text, Offset at, double opacity) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: opacity),
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0.5,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, at);
-    }
-
-    drawPlace('Mississauga', Offset(size.width * 0.08, size.height * 0.12), 0.07);
-    drawPlace('Brampton', Offset(size.width * 0.58, size.height * 0.78), 0.06);
-
-    // Faint grid
-    final grid = Paint()
-      ..color = LocalMeshColors.borderMuted.withValues(alpha: 0.35)
-      ..strokeWidth = 0.5;
-    const step = 24.0;
-    for (var x = 0.0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
-    }
-    for (var y = 0.0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-
-    final n = math.max(3, math.min(peerCount, 8));
-    final center = Offset(size.width * 0.5, size.height * 0.48);
-    final radius = math.min(size.width, size.height) * 0.32;
-    final nodes = <Offset>[];
-    for (var i = 0; i < n; i++) {
-      final t = (i / n) * 2 * math.pi - math.pi / 2;
-      nodes.add(Offset(
-        center.dx + radius * 0.85 * math.cos(t),
-        center.dy + radius * 0.75 * math.sin(t),
-      ));
-    }
-
-    // Inactive / potential links (dashed grey)
-    final dash = Paint()
-      ..color = LocalMeshColors.textSecondary.withValues(alpha: 0.45)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-    for (var i = 0; i < n; i++) {
-      for (var j = i + 1; j < n; j++) {
-        if ((i - j).abs() == 1 || (i == 0 && j == n - 1)) continue;
-        _drawDashedLine(canvas, nodes[i], nodes[j], dash, 5, 4);
-      }
-    }
-
-    // Active mesh links (Y / ring subset)
-    final active = Paint()
-      ..color = LocalMeshColors.accent
-      ..strokeWidth = 2.5
-      ..style = PaintingStyle.stroke;
-    for (var i = 0; i < n; i++) {
-      final j = (i + 1) % n;
-      if (i < 3) {
-        canvas.drawLine(nodes[i], nodes[j], active);
-      }
-    }
-    canvas.drawLine(nodes[0], center, active);
-
-    // Nodes
-    final nodeFill = Paint()..color = LocalMeshColors.surfaceCard;
-    final nodeEdge = Paint()
-      ..color = LocalMeshColors.accent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    for (final p in nodes) {
-      canvas.drawCircle(p, 6, nodeFill);
-      canvas.drawCircle(p, 6, nodeEdge);
-    }
-    canvas.drawCircle(center, 7, nodeFill);
-    canvas.drawCircle(center, 7, nodeEdge..strokeWidth = 2);
-
+  void _drawLabel(Canvas canvas, String text, Offset center, Color color) {
     final tp = TextPainter(
       text: TextSpan(
-        text: 'TOPOLOGY ACTIVE',
+        text: text.length > 14 ? text.substring(0, 14) : text,
         style: TextStyle(
-          color: LocalMeshColors.accent.withValues(alpha: 0.9),
-          fontSize: 11,
+          color: color,
+          fontSize: 10,
           fontFamily: 'monospace',
-          letterSpacing: 1,
         ),
       ),
+      maxLines: 1,
       textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy + 18));
+    )..layout(maxWidth: 96);
+    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy));
   }
 
-  void _drawDashedLine(
-    Canvas canvas,
-    Offset a,
-    Offset b,
-    Paint paint,
-    double dash,
-    double gap,
-  ) {
+  void _drawDashedLine(Canvas canvas, Offset a, Offset b, Paint paint) {
     final d = b - a;
     final len = d.distance;
     if (len == 0) return;
     final dir = d / len;
     var pos = 0.0;
     while (pos < len) {
-      final p0 = a + dir * pos;
-      final seg = math.min(dash, len - pos);
-      final p1 = a + dir * (pos + seg);
-      canvas.drawLine(p0, p1, paint);
-      pos += dash + gap;
+      final end = math.min(pos + 6, len);
+      canvas.drawLine(a + dir * pos, a + dir * end, paint);
+      pos += 11;
     }
   }
 
   @override
   bool shouldRepaint(covariant _MeshTopologyPainter oldDelegate) =>
-      oldDelegate.peerCount != peerCount;
+      oldDelegate.topology != topology;
 }
