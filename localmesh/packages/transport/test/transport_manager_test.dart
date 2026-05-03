@@ -68,5 +68,70 @@ void main() {
       final received = await receivedFuture;
       expect(received.data, payload);
     });
+
+    test('start keeps healthy transports running when one transport throws',
+        () async {
+      manager = TransportManager([_FailingTransport('bad'), transport1]);
+
+      await manager.start();
+
+      expect(transport1.state, TransportState.running);
+    });
+
+    test('start throws only when no transport reaches running state', () async {
+      manager = TransportManager([
+        _FailingTransport('bad-a'),
+        _FailingTransport('bad-b'),
+      ]);
+
+      expect(
+        manager.start,
+        throwsA(isA<TransportException>()),
+      );
+    });
   });
+}
+
+class _FailingTransport implements Transport {
+  _FailingTransport(this.name);
+
+  @override
+  final String name;
+
+  @override
+  TransportState get state => TransportState.error;
+
+  @override
+  List<String> get connectedPeers => const [];
+
+  @override
+  Stream<PeerEvent> get peerEvents => const Stream.empty();
+
+  @override
+  Stream<TransportPayload> get incomingData => const Stream.empty();
+
+  @override
+  Stream<TransportStatus> get status => const Stream.empty();
+
+  @override
+  bool hasPeer(String peerId) => false;
+
+  @override
+  Future<void> start() async {
+    throw TransportException(name, 'boom');
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> updateBatterySaver(bool enabled) async {}
+
+  @override
+  Future<void> sendTo(String peerId, Uint8List data) async {
+    throw TransportException(name, 'no peer');
+  }
+
+  @override
+  Future<void> broadcast(Uint8List data) async {}
 }

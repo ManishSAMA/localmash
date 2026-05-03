@@ -29,7 +29,27 @@ class TransportManager {
   }
 
   Future<void> start() async {
-    await Future.wait(_transports.map((t) => t.start()));
+    final failures = <String>[];
+    await Future.wait(_transports.map((transport) async {
+      try {
+        await transport.start();
+      } catch (e) {
+        failures.add('${transport.name}: $e');
+        debugPrint(
+          '[TRANSPORT][MANAGER] ${transport.name} failed to start: $e',
+        );
+      }
+    }));
+
+    if (_transports.any((t) => t.state == TransportState.running)) return;
+    if (failures.isEmpty) {
+      throw TransportException(
+          'manager', 'No transports reached running state');
+    }
+    throw TransportException(
+      'manager',
+      'No transports reached running state: ${failures.join('; ')}',
+    );
   }
 
   Future<void> stop() async {
@@ -63,15 +83,41 @@ class TransportManager {
 
     if (succeeded) return;
     if (attempted && lastError != null) {
-      throw TransportException('manager', 'All transports failed for $peerId: $lastError');
+      throw TransportException(
+          'manager', 'All transports failed for $peerId: $lastError');
     }
-    throw TransportException('manager', 'No connected transport for peer $peerId');
+    throw TransportException(
+        'manager', 'No connected transport for peer $peerId');
   }
 
   Future<void> broadcast(Uint8List data) async {
-    await Future.wait([
-      for (final transport in _transports) transport.broadcast(data),
-    ]);
+    var attempted = false;
+    var succeeded = false;
+    Object? lastError;
+
+    for (final transport in _transports) {
+      if (transport.state != TransportState.running ||
+          transport.connectedPeers.isEmpty) {
+        continue;
+      }
+      attempted = true;
+      try {
+        await transport.broadcast(data);
+        succeeded = true;
+      } catch (e) {
+        lastError = e;
+        debugPrint(
+          '[TRANSPORT][MANAGER] broadcast failed via ${transport.name}: $e',
+        );
+      }
+    }
+
+    if (succeeded) return;
+    if (attempted && lastError != null) {
+      throw TransportException(
+          'manager', 'All connected transports failed: $lastError');
+    }
+    throw TransportException('manager', 'No connected transport peers');
   }
 
   List<Transport> get transports => List.unmodifiable(_transports);

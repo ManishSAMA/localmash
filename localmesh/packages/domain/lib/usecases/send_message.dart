@@ -82,6 +82,8 @@ class SendMessage {
       lamportTs: lamportTs,
       signature: const [],
       createdAt: DateTime.now().millisecondsSinceEpoch,
+      deliveryStatus: MessageDeliveryStatus.sending,
+      plaintext: plaintext,
     );
 
     final signature = await _signer.sign(

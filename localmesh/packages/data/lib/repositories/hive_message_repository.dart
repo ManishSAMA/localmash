@@ -8,6 +8,11 @@ class HiveMessageRepository implements MessageRepository {
   }
 
   @override
+  Future<void> updateMessage(LocalMeshMessage message) async {
+    await HiveLocalDataSource.messagesBox.put(message.id, message);
+  }
+
+  @override
   Future<List<LocalMeshMessage>> getMessagesForChat(
     String chatRoomId, {
     int? afterLamportTs,

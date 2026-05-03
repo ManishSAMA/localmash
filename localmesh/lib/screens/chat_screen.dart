@@ -18,7 +18,6 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _controller = TextEditingController();
   final Map<String, Future<String?>> _decryptFutures = {};
-  bool _sending = false;
 
   Future<String?> _decryptFuture(LocalMeshMessage msg, MessageController ctrl) {
     return _decryptFutures.putIfAbsent(
@@ -57,7 +56,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     ref.listen(decryptedMessagesProvider, (_, next) {
       next.whenData((dm) {
-        final isForThisChat = dm.envelope.senderId == widget.peer.id ||
+        final isForThisChat =
+            dm.envelope.senderId == widget.peer.id ||
             dm.envelope.recipientId == widget.peer.id;
         if (isForThisChat && mounted) {
           ref.invalidate(chatMessagesProvider(widget.peer.id));
@@ -110,10 +110,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Divider(
-                    height: 1,
-                    color: LocalMeshColors.borderMuted,
-                  ),
+                  child: Divider(height: 1, color: LocalMeshColors.borderMuted),
                 ),
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 12),
@@ -128,10 +125,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
                 ),
                 Expanded(
-                  child: Divider(
-                    height: 1,
-                    color: LocalMeshColors.borderMuted,
-                  ),
+                  child: Divider(height: 1, color: LocalMeshColors.borderMuted),
                 ),
               ],
             ),
@@ -162,28 +156,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           final m = messages[messages.length - 1 - i];
                           final myFp = identity?.fingerprint ?? '';
                           final isMine = m.senderId == myFp;
-                          final cached =
-                              messageController.cachedPlaintextFor(m.id);
+                          final persisted = m.plaintext;
+                          if (persisted != null) {
+                            return ChatMessageRow(
+                              isMine: isMine,
+                              plaintext: persisted,
+                              timeLabel: _formatZulu(m.createdAt),
+                              senderLabel: isMine
+                                  ? null
+                                  : _nodeLabel(widget.peer),
+                              hopCount: m.hopCount,
+                              deliveryStatus: m.deliveryStatus,
+                            );
+                          }
+                          final cached = messageController.cachedPlaintextFor(
+                            m.id,
+                          );
                           if (cached != null) {
                             return ChatMessageRow(
                               isMine: isMine,
                               plaintext: cached,
                               timeLabel: _formatZulu(m.createdAt),
-                              senderLabel:
-                                  isMine ? null : _nodeLabel(widget.peer),
+                              senderLabel: isMine
+                                  ? null
+                                  : _nodeLabel(widget.peer),
                               hopCount: m.hopCount,
+                              deliveryStatus: m.deliveryStatus,
                             );
                           }
                           return FutureBuilder<String?>(
                             future: _decryptFuture(m, messageController),
-                            builder: (context, snap) => ChatMessageRow(
-                              isMine: isMine,
-                              plaintext: snap.data ?? '[DECRYPTING…]',
-                              timeLabel: _formatZulu(m.createdAt),
-                              senderLabel:
-                                  isMine ? null : _nodeLabel(widget.peer),
-                              hopCount: m.hopCount,
-                            ),
+                            builder: (context, snap) {
+                              final text = snap.hasData
+                                  ? snap.data!
+                                  : snap.connectionState == ConnectionState.done
+                                  ? '[UNABLE TO DECRYPT]'
+                                  : '[DECRYPTING...]';
+                              return ChatMessageRow(
+                                isMine: isMine,
+                                plaintext: text,
+                                timeLabel: _formatZulu(m.createdAt),
+                                senderLabel: isMine
+                                    ? null
+                                    : _nodeLabel(widget.peer),
+                                hopCount: m.hopCount,
+                                deliveryStatus: m.deliveryStatus,
+                              );
+                            },
                           );
                         },
                       ),
@@ -200,7 +219,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   borderRadius: BorderRadius.circular(8),
                   child: IconButton(
                     onPressed: () {},
-                    icon: const Icon(Icons.add, color: LocalMeshColors.textSecondary),
+                    icon: const Icon(
+                      Icons.add,
+                      color: LocalMeshColors.textSecondary,
+                    ),
                     tooltip: 'Attachments',
                   ),
                 ),
@@ -214,8 +236,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ),
                     decoration: const InputDecoration(
                       hintText: 'TRANSMIT MESSAGE…',
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
                     ),
                     minLines: 1,
                     maxLines: 4,
@@ -227,24 +251,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   color: LocalMeshColors.accent,
                   borderRadius: BorderRadius.circular(8),
                   child: InkWell(
-                    onTap: _sending ? null : _send,
+                    onTap: _send,
                     borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: _sending
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF0D1117),
-                              ),
-                            )
-                          : const Icon(
-                              Icons.send_rounded,
-                              color: Color(0xFF0D1117),
-                              size: 22,
-                            ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Icon(
+                        Icons.send_rounded,
+                        color: Color(0xFF0D1117),
+                        size: 22,
+                      ),
                     ),
                   ),
                 ),
@@ -258,24 +273,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Future<void> _send() async {
     if (_controller.text.trim().isEmpty) return;
-    setState(() => _sending = true);
     final text = _controller.text.trim();
+    _controller.clear();
     try {
       final ctrl = ref.read(messageControllerSyncProvider);
-      await ctrl.sendText(
-        recipientId: widget.peer.id,
-        plaintext: text,
-      );
-      _controller.clear();
+      await ctrl.sendText(recipientId: widget.peer.id, plaintext: text);
       ref.invalidate(chatMessagesProvider(widget.peer.id));
     } catch (e) {
+      _controller.text = text;
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
-    } finally {
-      if (mounted) setState(() => _sending = false);
     }
   }
 }

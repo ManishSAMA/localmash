@@ -15,9 +15,16 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<void> saveMessage(LocalMeshMessage message) async {
+    final old = _byId[message.id];
+    if (old != null) {
+      _byRoom[old.recipientId]?.removeWhere((m) => m.id == message.id);
+    }
     _byId[message.id] = message;
     _byRoom.putIfAbsent(message.recipientId, () => []).add(message);
   }
+
+  @override
+  Future<void> updateMessage(LocalMeshMessage message) => saveMessage(message);
 
   @override
   Future<List<LocalMeshMessage>> getMessagesForChat(

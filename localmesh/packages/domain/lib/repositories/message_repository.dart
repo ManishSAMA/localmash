@@ -2,6 +2,7 @@ import '../entities/message.dart';
 
 abstract class MessageRepository {
   Future<void> saveMessage(LocalMeshMessage message);
+  Future<void> updateMessage(LocalMeshMessage message);
   Future<List<LocalMeshMessage>> getMessagesForChat(
     String chatRoomId, {
     int? afterLamportTs,

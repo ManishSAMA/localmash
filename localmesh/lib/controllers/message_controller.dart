@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:domain/domain.dart';
@@ -102,27 +101,30 @@ class MessageController {
     required ReceiveMessage receiveMessage,
     required SendMessage sendMessage,
     required SyncHistory syncHistory,
+    required MessageRepository messageRepo,
     required PeerRepository peerRepo,
     required IdentityRepository identityRepo,
     required MessageSigner signer,
     required IdentityGenerator identityGenerator,
     required MessageEncryptor encryptor,
     required SessionKeyDeriver keyDeriver,
-  })  : _transportManager = transportManager,
-        _receiveMessage = receiveMessage,
-        _sendMessage = sendMessage,
-        _syncHistory = syncHistory,
-        _peerRepo = peerRepo,
-        _identityRepo = identityRepo,
-        _signer = signer,
-        _identityGenerator = identityGenerator,
-        _encryptor = encryptor,
-        _keyDeriver = keyDeriver;
+  }) : _transportManager = transportManager,
+       _receiveMessage = receiveMessage,
+       _sendMessage = sendMessage,
+       _syncHistory = syncHistory,
+       _messageRepo = messageRepo,
+       _peerRepo = peerRepo,
+       _identityRepo = identityRepo,
+       _signer = signer,
+       _identityGenerator = identityGenerator,
+       _encryptor = encryptor,
+       _keyDeriver = keyDeriver;
 
   final TransportManager _transportManager;
   final ReceiveMessage _receiveMessage;
   final SendMessage _sendMessage;
   final SyncHistory _syncHistory;
+  final MessageRepository _messageRepo;
   final PeerRepository _peerRepo;
   final IdentityRepository _identityRepo;
   final MessageSigner _signer;
@@ -161,6 +163,7 @@ class MessageController {
   static const int _kPlaintextCacheMax = 1000;
   static const int _kMaxHandshakeRetries = 2;
   static const Duration _kHandshakeTimeout = Duration(seconds: 10);
+  static const Duration _kSendTimeout = Duration(seconds: 12);
 
   /// Stream of successfully decrypted messages for UI consumption.
   Stream<DecryptedMessage> get decryptedMessages => _decryptedCtrl.stream;
@@ -170,6 +173,7 @@ class MessageController {
     yield _diagnostics;
     yield* _diagnosticsCtrl.stream;
   }
+
   Stream<Map<String, PeerHandshakeState>> get handshakeStates async* {
     yield Map.unmodifiable(_handshakeStates);
     yield* _handshakeCtrl.stream;
@@ -185,6 +189,11 @@ class MessageController {
   Future<String?> decryptForDisplay(LocalMeshMessage msg) async {
     if (!contentBearingMessageTypes.contains(msg.type)) return null;
 
+    if (msg.plaintext != null) {
+      _cachePlaintext(msg.id, msg.plaintext!);
+      return msg.plaintext;
+    }
+
     final cached = _plaintextCache[msg.id];
     if (cached != null) return cached;
 
@@ -192,14 +201,17 @@ class MessageController {
       final me = await _identityRepo.getIdentity();
       if (me == null) return null;
 
-      final sender = await _peerRepo.getPeerById(msg.senderId);
-      if (sender == null) return null;
+      final remotePeerId = msg.senderId == me.fingerprint
+          ? msg.recipientId
+          : msg.senderId;
+      final remotePeer = await _peerRepo.getPeerById(remotePeerId);
+      if (remotePeer == null) return null;
 
       final sessionKey = await _keyDeriver.deriveSessionKey(
         myPrivateKey: me.encryptionPrivateKey,
-        theirPublicKey: sender.encryptionPublicKey,
+        theirPublicKey: remotePeer.encryptionPublicKey,
         myFingerprint: me.fingerprint,
-        theirFingerprint: sender.id,
+        theirFingerprint: remotePeer.id,
       );
 
       final plaintextBytes = await _encryptor.decrypt(
@@ -208,15 +220,18 @@ class MessageController {
       );
       final plaintext = utf8.decode(plaintextBytes);
       _cachePlaintext(msg.id, plaintext);
+      await _messageRepo.updateMessage(msg.copyWith(plaintext: plaintext));
+      _emitMessageRevision();
       return plaintext;
     } catch (_) {
       return null;
     }
   }
 
-  /// Start listening to transport streams. Call after TransportManager.start().
+  /// Start listening to transport streams before TransportManager.start().
   Future<void> start() async {
     if (_started) return;
+    debugPrint('[CONTROLLER] starting mesh control-plane listeners');
     // Remove provisional peers left over from a previous session where a clean
     // disconnect event was never received (e.g. crash, self-discovery stall).
     final stale = await _peerRepo.getAllPeers();
@@ -226,6 +241,7 @@ class MessageController {
     _dataSub = _transportManager.incomingData.listen(_handleIncoming);
     _peerSub = _transportManager.peerEvents.listen(_handlePeerEvent);
     _started = true;
+    debugPrint('[CONTROLLER] mesh control-plane listeners ready');
   }
 
   Future<void> stop() async {
@@ -249,14 +265,45 @@ class MessageController {
       plaintext: plaintext,
     );
     _cachePlaintext(msg.id, plaintext);
+    _emitMessageRevision();
+    unawaited(_completeSend(msg));
+    return msg;
+  }
+
+  Future<void> _completeSend(LocalMeshMessage msg) async {
     final wire = WireCodec.encode(msg);
-    await _transportManager.broadcast(wire);
+    var status = MessageDeliveryStatus.delivered;
+    try {
+      await _ensureTransportReady();
+      await _transportManager.broadcast(wire).timeout(_kSendTimeout);
+    } catch (e) {
+      status = MessageDeliveryStatus.failed;
+      debugPrint('[CONTROLLER] send failed for message ${msg.id}: $e');
+    }
+    final latest = await _messageRepo.getMessageById(msg.id);
+    if (latest != null) {
+      await _messageRepo.updateMessage(latest.copyWith(deliveryStatus: status));
+    }
     _addRoutingEvent(
-      payload: 'Text message sent • ${_shortId(msg.id)}',
-      status: 'SENT',
+      payload: status == MessageDeliveryStatus.delivered
+          ? 'Text message delivered • ${_shortId(msg.id)}'
+          : 'Text message failed • ${_shortId(msg.id)}',
+      status: status == MessageDeliveryStatus.delivered ? 'SENT' : 'DROP',
     );
     _emitMessageRevision();
-    return msg;
+  }
+
+  Future<void> _ensureTransportReady() async {
+    if (_transportManager.transports.any(
+      (t) => t.state == TransportState.running && t.connectedPeers.isNotEmpty,
+    )) {
+      return;
+    }
+    if (_transportManager.transports.any(
+      (t) => t.state == TransportState.idle || t.state == TransportState.error,
+    )) {
+      await _transportManager.start();
+    }
   }
 
   // ── Incoming ─────────────────────────────────────────────────────────────
@@ -300,7 +347,7 @@ class MessageController {
     // (PEER_ANNOUNCE, sync, etc.) are handled above and must not reach the stream.
     final deliveredLocally =
         result.decision.action == RouterAction.deliverOnly ||
-            result.decision.action == RouterAction.deliverAndForward;
+        result.decision.action == RouterAction.deliverAndForward;
     if (deliveredLocally && msg.type == MessageType.text) {
       if (result.decrypted != null) {
         _cachePlaintext(msg.id, result.decrypted!.plaintext);
@@ -353,7 +400,12 @@ class MessageController {
   // ── Peer events ───────────────────────────────────────────────────────────
 
   Future<void> _handlePeerEvent(PeerEvent event) async {
-    final resolvedPeerId = _transportPeerToIdentity[event.peerId] ?? event.peerId;
+    debugPrint(
+      '[CONTROLLER] transport peer event ${event.connected ? "connected" : "disconnected"} '
+      'transport=${event.transportName} id=${event.peerId} name="${event.displayName ?? ''}"',
+    );
+    final resolvedPeerId =
+        _transportPeerToIdentity[event.peerId] ?? event.peerId;
     await _peerRepo.updatePeerConnectionStatus(resolvedPeerId, event.connected);
 
     if (event.connected) {
@@ -379,6 +431,9 @@ class MessageController {
             isTrusted: false,
           );
           await _peerRepo.savePeer(provisional);
+          debugPrint(
+            '[CONTROLLER] provisional peer created transportId=${event.peerId} label="$label"',
+          );
         }
       }
     } else {
@@ -407,6 +462,9 @@ class MessageController {
     _emitPeerRevision();
 
     if (event.connected) {
+      debugPrint(
+        '[CONTROLLER] sending announce to transport peer ${event.peerId}',
+      );
       await _sendPeerAnnounceTo(event.peerId);
       // Retry announce after 4 s in case of BLE packet loss
       _scheduleAnnounceRetry(event.peerId);
@@ -481,6 +539,9 @@ class MessageController {
     String transportPeerId,
   ) async {
     try {
+      debugPrint(
+        '[CONTROLLER] peer announce received sender=${msg.senderId} transport=$transportPeerId',
+      );
       final parsed = _parseAnnouncePayload(msg.payload);
       if (parsed == null) return;
       final sigPub = parsed.signingPublicKey;
@@ -490,8 +551,9 @@ class MessageController {
         transportName: null,
         stableId: msg.senderId,
       );
-      final computedFingerprint =
-          await _identityGenerator.computeFingerprint(sigPub);
+      final computedFingerprint = await _identityGenerator.computeFingerprint(
+        sigPub,
+      );
       if (computedFingerprint != msg.senderId) {
         debugPrint(
           'MessageController: rejecting PEER_ANNOUNCE with mismatched fingerprint',
@@ -548,6 +610,9 @@ class MessageController {
       await _peerRepo.savePeer(peer);
       _transportPeerToIdentity[transportPeerId] = msg.senderId;
       _identityToTransportPeer[msg.senderId] = transportPeerId;
+      debugPrint(
+        '[CONTROLLER] transport peer mapped transport=$transportPeerId identity=${msg.senderId}',
+      );
       if (_pendingConnectedTransportPeers.contains(transportPeerId)) {
         await _peerRepo.updatePeerConnectionStatus(msg.senderId, true);
       }
@@ -574,6 +639,9 @@ class MessageController {
       return;
     }
     if (me.fingerprint.compareTo(peerId) < 0) {
+      debugPrint(
+        '[CONTROLLER] deterministic key exchange owner; starting with $peerId',
+      );
       await _sendKeyExchangeStart(peerId);
     }
   }
@@ -586,6 +654,9 @@ class MessageController {
     }
     _handshakeAttempts[peerId] = attempts + 1;
     _setHandshakeState(peerId, PeerHandshakeState.keyExchangeStarted);
+    debugPrint(
+      '[CONTROLLER] key exchange start peer=$peerId attempt=${attempts + 1}',
+    );
     try {
       await _sendControl(peerId, MessageType.keyExchangeStart);
     } catch (e) {
@@ -609,6 +680,7 @@ class MessageController {
     _transportPeerToIdentity[transportPeerId] = msg.senderId;
     _identityToTransportPeer[msg.senderId] = transportPeerId;
     _setHandshakeState(msg.senderId, PeerHandshakeState.keyExchangeStarted);
+    debugPrint('[CONTROLLER] key exchange start received from ${msg.senderId}');
     await _sendControl(msg.senderId, MessageType.keyExchangeConfirm);
     await _establishSession(msg.senderId);
   }
@@ -623,6 +695,7 @@ class MessageController {
     _transportPeerToIdentity[transportPeerId] = msg.senderId;
     _identityToTransportPeer[msg.senderId] = transportPeerId;
     _setHandshakeState(msg.senderId, PeerHandshakeState.keyExchangeConfirmed);
+    debugPrint('[CONTROLLER] key exchange confirmed by ${msg.senderId}');
     await _establishSession(msg.senderId);
   }
 
@@ -636,6 +709,7 @@ class MessageController {
   Future<void> _establishSession(String peerId) async {
     _handshakeTimers.remove(peerId)?.cancel();
     _setHandshakeState(peerId, PeerHandshakeState.sessionEstablished);
+    debugPrint('[CONTROLLER] session established with $peerId');
     final peer = await _peerRepo.getPeerById(peerId);
     _setHandshakeState(
       peerId,
@@ -647,6 +721,7 @@ class MessageController {
     final transportPeerId = _identityToTransportPeer[peerId];
     if (transportPeerId != null) await _sendSyncRequestTo(transportPeerId);
     _emitPeerRevision();
+    debugPrint('[CONTROLLER] UI peer state updated for $peerId');
   }
 
   Future<void> _sendControl(String peerId, MessageType type) async {
@@ -709,8 +784,9 @@ class MessageController {
     final chatRoomIds = [...peers.map((p) => p.id), me.fingerprint];
     final request = await _syncHistory.buildRequest(chatRoomIds);
 
-    final jsonPayload =
-        Uint8List.fromList(utf8.encode(jsonEncode(request.chatRoomTimestamps)));
+    final jsonPayload = Uint8List.fromList(
+      utf8.encode(jsonEncode(request.chatRoomTimestamps)),
+    );
 
     var msg = LocalMeshMessage(
       id: 'sync-req-${me.fingerprint}-${DateTime.now().microsecondsSinceEpoch}',
@@ -758,15 +834,18 @@ class MessageController {
 
       await Future.wait([
         for (final m in response.messages)
-          _transportManager.sendTo(fromPeerId, WireCodec.encode(m)).then((_) {
-            debugPrint(
-              '[CONTROLLER] sync response message ${m.id} sent to $fromPeerId',
-            );
-          }).catchError((Object e) {
-            debugPrint(
-              '[CONTROLLER] sync response message ${m.id} failed for $fromPeerId: $e',
-            );
-          }),
+          _transportManager
+              .sendTo(fromPeerId, WireCodec.encode(m))
+              .then((_) {
+                debugPrint(
+                  '[CONTROLLER] sync response message ${m.id} sent to $fromPeerId',
+                );
+              })
+              .catchError((Object e) {
+                debugPrint(
+                  '[CONTROLLER] sync response message ${m.id} failed for $fromPeerId: $e',
+                );
+              }),
       ]);
     } catch (e) {
       debugPrint('MessageController: bad SYNC_REQUEST — $e');
@@ -794,6 +873,7 @@ class MessageController {
     await _peerRepo.trustPeer(peerId);
     _setHandshakeState(peerId, PeerHandshakeState.verified);
     _emitPeerRevision();
+    debugPrint('[CONTROLLER] peer trusted $peerId; UI peer state updated');
   }
 
   void _emitPeerRevision() {
@@ -806,16 +886,9 @@ class MessageController {
     _messageRevisionCtrl.add(_messageRevision);
   }
 
-  void _addRoutingEvent({
-    required String payload,
-    required String status,
-  }) {
+  void _addRoutingEvent({required String payload, required String status}) {
     final next = [
-      RoutingEvent(
-        timestamp: DateTime.now(),
-        payload: payload,
-        status: status,
-      ),
+      RoutingEvent(timestamp: DateTime.now(), payload: payload, status: status),
       ..._diagnostics.routingEvents,
     ].take(50).toList(growable: false);
     _diagnostics = _diagnostics.copyWith(routingEvents: next);
@@ -843,7 +916,10 @@ class MessageController {
     _topologyCtrl.add(await _buildTopologySnapshot());
   }
 
-  Future<void> _recordRelayLink(String fromTransportId, String toTransportId) async {
+  Future<void> _recordRelayLink(
+    String fromTransportId,
+    String toTransportId,
+  ) async {
     final from = _transportPeerToIdentity[fromTransportId] ?? fromTransportId;
     final to = _transportPeerToIdentity[toTransportId] ?? toTransportId;
     if (from == to) return;
@@ -859,8 +935,10 @@ class MessageController {
   }
 
   void _removeActiveLink(String peerId) {
-    _topologyLinks.removeWhere((_, link) =>
-        link.active && (link.fromId == peerId || link.toId == peerId));
+    _topologyLinks.removeWhere(
+      (_, link) =>
+          link.active && (link.fromId == peerId || link.toId == peerId),
+    );
     unawaited(_buildTopologySnapshot().then(_topologyCtrl.add));
   }
 
@@ -868,7 +946,9 @@ class MessageController {
     final me = await _identityRepo.getIdentity();
     final localId = me?.fingerprint ?? 'local';
     final nodes = <String, String>{
-      localId: me == null ? 'This node' : _validIdentityName(me.displayName, localId),
+      localId: me == null
+          ? 'This node'
+          : _validIdentityName(me.displayName, localId),
     };
     for (final peer in await _peerRepo.getAllPeers()) {
       if (peer.signingPublicKey.isEmpty &&
@@ -932,7 +1012,10 @@ class MessageController {
     return _fallbackNodeName(stableId);
   }
 
-  String _resolvedDeviceLabel({required String? rawName, required String stableId}) {
+  String _resolvedDeviceLabel({
+    required String? rawName,
+    required String stableId,
+  }) {
     return _validPeerName(
       announcedName: null,
       transportName: rawName,

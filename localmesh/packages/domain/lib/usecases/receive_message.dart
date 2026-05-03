@@ -54,9 +54,8 @@ class ReceiveMessage {
   Future<ReceiveMessageResult> call(LocalMeshMessage message) async {
     final decision = await _router.handleIncoming(message);
 
-    final shouldDeliverLocally =
-        decision.action == RouterAction.deliverOnly ||
-            decision.action == RouterAction.deliverAndForward;
+    final shouldDeliverLocally = decision.action == RouterAction.deliverOnly ||
+        decision.action == RouterAction.deliverAndForward;
 
     if (!shouldDeliverLocally) {
       return ReceiveMessageResult(decision: decision);
@@ -64,12 +63,6 @@ class ReceiveMessage {
 
     // Merge Lamport clock with the message's timestamp
     _clock.merge(message.lamportTs);
-
-    // Persist only content-bearing messages — control-plane messages
-    // (PEER_ANNOUNCE, SYNC_REQUEST) must not appear in the chat history.
-    if (_persistableTypes.contains(message.type)) {
-      await _messageRepo.saveMessage(message);
-    }
 
     // Attempt to decrypt. Only content-bearing messages reach here
     // (control messages are filtered above), but broadcast messages
@@ -106,6 +99,17 @@ class ReceiveMessage {
       // Decryption failed — envelope is still persisted. UI can show
       // "encrypted message, unable to decrypt" if needed.
       decrypted = null;
+    }
+
+    // Persist only content-bearing messages — control-plane messages
+    // (PEER_ANNOUNCE, SYNC_REQUEST) must not appear in the chat history.
+    if (_persistableTypes.contains(message.type)) {
+      await _messageRepo.saveMessage(
+        message.copyWith(
+          deliveryStatus: MessageDeliveryStatus.received,
+          plaintext: decrypted?.plaintext,
+        ),
+      );
     }
 
     return ReceiveMessageResult(decision: decision, decrypted: decrypted);

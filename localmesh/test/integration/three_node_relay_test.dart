@@ -24,13 +24,23 @@ class _FakeMessageRepository implements MessageRepository {
 
   @override
   Future<void> saveMessage(LocalMeshMessage message) async {
+    final old = _byId[message.id];
+    if (old != null) {
+      _byRoom[old.recipientId]?.removeWhere((m) => m.id == message.id);
+    }
     _byId[message.id] = message;
     _byRoom.putIfAbsent(message.recipientId, () => []).add(message);
   }
 
   @override
-  Future<List<LocalMeshMessage>> getMessagesForChat(String chatRoomId,
-      {int? afterLamportTs, int limit = 100}) async {
+  Future<void> updateMessage(LocalMeshMessage message) => saveMessage(message);
+
+  @override
+  Future<List<LocalMeshMessage>> getMessagesForChat(
+    String chatRoomId, {
+    int? afterLamportTs,
+    int limit = 100,
+  }) async {
     final msgs = _byRoom[chatRoomId] ?? [];
     return msgs
         .where((m) => afterLamportTs == null || m.lamportTs > afterLamportTs)
@@ -119,8 +129,7 @@ class _FakeSigner implements MessageSigner {
     required LocalMeshMessage message,
     required List<int> signingPrivateKey,
     required List<int> signingPublicKey,
-  }) async =>
-      List<int>.from(_sig);
+  }) async => List<int>.from(_sig);
 
   @override
   Future<bool> verify({
@@ -138,13 +147,17 @@ class _FakeSigner implements MessageSigner {
 
 class _FakeEncryptor implements MessageEncryptor {
   @override
-  Future<Uint8List> encrypt(
-          {required List<int> plaintext, required List<int> sessionKey}) async =>
+  Future<Uint8List> encrypt({
+    required List<int> plaintext,
+    required List<int> sessionKey,
+  }) async =>
       Uint8List.fromList(plaintext.map((b) => b ^ sessionKey[0]).toList());
 
   @override
-  Future<Uint8List> decrypt(
-          {required List<int> encrypted, required List<int> sessionKey}) async =>
+  Future<Uint8List> decrypt({
+    required List<int> encrypted,
+    required List<int> sessionKey,
+  }) async =>
       Uint8List.fromList(encrypted.map((b) => b ^ sessionKey[0]).toList());
 }
 
@@ -169,7 +182,9 @@ class _FakeKeyDeriver implements SessionKeyDeriver {
 class _FakeIdentityGenerator implements IdentityGenerator {
   @override
   Future<LocalMeshIdentity> generate(String displayName) async {
-    final fp = await computeFingerprint(List.filled(32, displayName.codeUnitAt(0)));
+    final fp = await computeFingerprint(
+      List.filled(32, displayName.codeUnitAt(0)),
+    );
     return LocalMeshIdentity(
       displayName: displayName,
       signingPublicKey: List.filled(32, displayName.codeUnitAt(0)),
@@ -261,6 +276,7 @@ Future<_Node> _buildNode(String name) async {
     receiveMessage: receiveMessage,
     sendMessage: sendMessage,
     syncHistory: SyncHistory(messageRepo: messageRepo),
+    messageRepo: messageRepo,
     peerRepo: peerRepo,
     identityRepo: identityRepo,
     signer: signer,
@@ -281,15 +297,17 @@ Future<_Node> _buildNode(String name) async {
 }
 
 Future<void> _registerPeer(_Node host, _Node remote) async {
-  await host.peerRepo.savePeer(Peer(
-    id: remote.fp,
-    displayName: remote.identity.displayName,
-    signingPublicKey: remote.identity.signingPublicKey,
-    encryptionPublicKey: remote.identity.encryptionPublicKey,
-    lastSeen: DateTime.now().millisecondsSinceEpoch,
-    isConnected: true,
-    isTrusted: true,
-  ));
+  await host.peerRepo.savePeer(
+    Peer(
+      id: remote.fp,
+      displayName: remote.identity.displayName,
+      signingPublicKey: remote.identity.signingPublicKey,
+      encryptionPublicKey: remote.identity.encryptionPublicKey,
+      lastSeen: DateTime.now().millisecondsSinceEpoch,
+      isConnected: true,
+      isTrusted: true,
+    ),
+  );
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -404,16 +422,23 @@ void main() {
   });
 
   group('TransportManager parallel start', () {
-    test('two concurrent 50ms futures complete in under 150ms (parallel contract)', () async {
-      final sw = Stopwatch()..start();
-      await Future.wait([
-        Future<void>.delayed(const Duration(milliseconds: 50)),
-        Future<void>.delayed(const Duration(milliseconds: 50)),
-      ]);
-      sw.stop();
-      expect(sw.elapsedMilliseconds, lessThan(150),
-          reason: 'TransportManager.start() must use Future.wait — two 50ms transports should complete in ~50ms, not ~100ms');
-    });
+    test(
+      'two concurrent 50ms futures complete in under 150ms (parallel contract)',
+      () async {
+        final sw = Stopwatch()..start();
+        await Future.wait([
+          Future<void>.delayed(const Duration(milliseconds: 50)),
+          Future<void>.delayed(const Duration(milliseconds: 50)),
+        ]);
+        sw.stop();
+        expect(
+          sw.elapsedMilliseconds,
+          lessThan(150),
+          reason:
+              'TransportManager.start() must use Future.wait — two 50ms transports should complete in ~50ms, not ~100ms',
+        );
+      },
+    );
   });
 
   group('BLE chunk reliability contract', () {
@@ -432,17 +457,26 @@ void main() {
         (dm) => received.add(dm.plaintext),
       );
 
-      await nodeX.controller.sendText(recipientId: nodeY.fp, plaintext: 'alpha');
+      await nodeX.controller.sendText(
+        recipientId: nodeY.fp,
+        plaintext: 'alpha',
+      );
       await nodeX.controller.sendText(recipientId: nodeY.fp, plaintext: 'beta');
-      await nodeX.controller.sendText(recipientId: nodeY.fp, plaintext: 'gamma');
+      await nodeX.controller.sendText(
+        recipientId: nodeY.fp,
+        plaintext: 'gamma',
+      );
 
       await Future<void>.delayed(const Duration(milliseconds: 100));
       await sub.cancel();
       await nodeX.controller.dispose();
       await nodeY.controller.dispose();
 
-      expect(received, containsAll(['alpha', 'beta', 'gamma']),
-          reason: 'All messages must be delivered reliably');
+      expect(
+        received,
+        containsAll(['alpha', 'beta', 'gamma']),
+        reason: 'All messages must be delivered reliably',
+      );
     });
   });
 
@@ -476,74 +510,78 @@ void main() {
       await nodeB.controller.dispose();
     });
 
-    test('cold-cache: fresh controller can decrypt stored envelope (app-restart scenario)', () async {
-      final nodeA = await _buildNode('Aria');
-      final nodeB = await _buildNode('Bruno');
-      nodeA.transport.linkTo(nodeB.transport);
-      await _registerPeer(nodeA, nodeB);
-      await _registerPeer(nodeB, nodeA);
+    test(
+      'cold-cache: fresh controller can decrypt stored envelope (app-restart scenario)',
+      () async {
+        final nodeA = await _buildNode('Aria');
+        final nodeB = await _buildNode('Bruno');
+        nodeA.transport.linkTo(nodeB.transport);
+        await _registerPeer(nodeA, nodeB);
+        await _registerPeer(nodeB, nodeA);
 
-      // Exchange a message so nodeB stores the encrypted envelope
-      final received = <DecryptedMessage>[];
-      final sub = nodeB.controller.decryptedMessages.listen(received.add);
-      await nodeA.controller.sendText(
-        recipientId: nodeB.fp,
-        plaintext: 'historic message',
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      await sub.cancel();
+        // Exchange a message so nodeB stores the encrypted envelope
+        final received = <DecryptedMessage>[];
+        final sub = nodeB.controller.decryptedMessages.listen(received.add);
+        await nodeA.controller.sendText(
+          recipientId: nodeB.fp,
+          plaintext: 'historic message',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await sub.cancel();
 
-      expect(received, hasLength(1));
-      final envelope = received.first.envelope;
+        expect(received, hasLength(1));
+        final envelope = received.first.envelope;
 
-      // Retrieve the stored envelope from the repo (simulates loading from DB)
-      final stored = await nodeB.messageRepo.getMessageById(envelope.id);
-      expect(stored, isNotNull);
+        // Retrieve the stored envelope from the repo (simulates loading from DB)
+        final stored = await nodeB.messageRepo.getMessageById(envelope.id);
+        expect(stored, isNotNull);
 
-      // Build a NEW controller with the same repos but an empty plaintext cache
-      final freshController = MessageController(
-        transportManager: TransportManager([]),
-        receiveMessage: ReceiveMessage(
-          router: MeshRouter(
-            signer: _FakeSigner(),
-            myFingerprint: nodeB.fp,
-            lookupSenderPublicKey: (id) async {
-              final peer = await nodeB.peerRepo.getPeerById(id);
-              return peer?.signingPublicKey;
-            },
+        // Build a NEW controller with the same repos but an empty plaintext cache
+        final freshController = MessageController(
+          transportManager: TransportManager([]),
+          receiveMessage: ReceiveMessage(
+            router: MeshRouter(
+              signer: _FakeSigner(),
+              myFingerprint: nodeB.fp,
+              lookupSenderPublicKey: (id) async {
+                final peer = await nodeB.peerRepo.getPeerById(id);
+                return peer?.signingPublicKey;
+              },
+            ),
+            identityRepo: nodeB.identityRepo,
+            peerRepo: nodeB.peerRepo,
+            messageRepo: nodeB.messageRepo,
+            encryptor: _FakeEncryptor(),
+            keyDeriver: _FakeKeyDeriver(),
+            clock: LamportClock(),
           ),
-          identityRepo: nodeB.identityRepo,
-          peerRepo: nodeB.peerRepo,
+          sendMessage: SendMessage(
+            identityRepo: nodeB.identityRepo,
+            peerRepo: nodeB.peerRepo,
+            messageRepo: nodeB.messageRepo,
+            encryptor: _FakeEncryptor(),
+            signer: _FakeSigner(),
+            keyDeriver: _FakeKeyDeriver(),
+            clock: LamportClock(),
+          ),
+          syncHistory: SyncHistory(messageRepo: nodeB.messageRepo),
           messageRepo: nodeB.messageRepo,
-          encryptor: _FakeEncryptor(),
-          keyDeriver: _FakeKeyDeriver(),
-          clock: LamportClock(),
-        ),
-        sendMessage: SendMessage(
-          identityRepo: nodeB.identityRepo,
           peerRepo: nodeB.peerRepo,
-          messageRepo: nodeB.messageRepo,
-          encryptor: _FakeEncryptor(),
+          identityRepo: nodeB.identityRepo,
           signer: _FakeSigner(),
+          identityGenerator: _FakeIdentityGenerator(),
+          encryptor: _FakeEncryptor(),
           keyDeriver: _FakeKeyDeriver(),
-          clock: LamportClock(),
-        ),
-        syncHistory: SyncHistory(messageRepo: nodeB.messageRepo),
-        peerRepo: nodeB.peerRepo,
-        identityRepo: nodeB.identityRepo,
-        signer: _FakeSigner(),
-        identityGenerator: _FakeIdentityGenerator(),
-        encryptor: _FakeEncryptor(),
-        keyDeriver: _FakeKeyDeriver(),
-      );
-      // Do NOT call freshController.start() — we only need decryptForDisplay
+        );
+        // Do NOT call freshController.start() — we only need decryptForDisplay
 
-      final plaintext = await freshController.decryptForDisplay(stored!);
-      expect(plaintext, equals('historic message'));
+        final plaintext = await freshController.decryptForDisplay(stored!);
+        expect(plaintext, equals('historic message'));
 
-      await nodeA.controller.dispose();
-      await nodeB.controller.dispose();
-      await freshController.dispose();
-    });
+        await nodeA.controller.dispose();
+        await nodeB.controller.dispose();
+        await freshController.dispose();
+      },
+    );
   });
 }

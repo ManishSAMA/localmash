@@ -77,7 +77,9 @@ void main() {
       await peerRepo.savePeer(bob);
     });
 
-    test('3. returns message with correct sender, recipient, TTL, lamportTs and hopCount', () async {
+    test(
+        '3. returns message with correct sender, recipient, TTL, lamportTs and hopCount',
+        () async {
       final msg = await sendMessage(
         recipientId: bob.id,
         plaintext: 'hello world',
@@ -91,11 +93,15 @@ void main() {
       expect(msg.version, 1);
     });
 
-    test('4. persists the message to the repository before returning', () async {
-      final msg = await sendMessage(recipientId: bob.id, plaintext: 'persist me');
+    test('4. persists the message to the repository before returning',
+        () async {
+      final msg =
+          await sendMessage(recipientId: bob.id, plaintext: 'persist me');
       final stored = await messageRepo.getMessageById(msg.id);
       expect(stored, isNotNull);
       expect(stored!.id, msg.id);
+      expect(stored.deliveryStatus, MessageDeliveryStatus.sending);
+      expect(stored.plaintext, 'persist me');
     });
 
     test('5. successive sends have strictly increasing lamportTs', () async {

@@ -11,6 +11,13 @@ enum MessageType {
   keyExchangeConfirm,
 }
 
+enum MessageDeliveryStatus {
+  sending,
+  delivered,
+  failed,
+  received,
+}
+
 /// The set of [MessageType] values that carry user-visible content.
 /// Used to decide whether a message should be persisted and whether
 /// it can be decrypted for display.
@@ -34,6 +41,8 @@ class LocalMeshMessage {
     required this.lamportTs,
     required this.signature,
     required this.createdAt,
+    this.deliveryStatus = MessageDeliveryStatus.received,
+    this.plaintext,
   });
 
   final String id;
@@ -47,6 +56,8 @@ class LocalMeshMessage {
   final int lamportTs;
   final List<int> signature;
   final int createdAt;
+  final MessageDeliveryStatus deliveryStatus;
+  final String? plaintext;
 
   bool get isBroadcast => recipientId == '*';
   bool get canForward => hopCount < ttl;
@@ -63,6 +74,8 @@ class LocalMeshMessage {
     int? lamportTs,
     List<int>? signature,
     int? createdAt,
+    MessageDeliveryStatus? deliveryStatus,
+    Object? plaintext = _unchanged,
   }) {
     return LocalMeshMessage(
       id: id ?? this.id,
@@ -76,13 +89,16 @@ class LocalMeshMessage {
       lamportTs: lamportTs ?? this.lamportTs,
       signature: signature ?? this.signature,
       createdAt: createdAt ?? this.createdAt,
+      deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+      plaintext: identical(plaintext, _unchanged)
+          ? this.plaintext
+          : plaintext as String?,
     );
   }
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is LocalMeshMessage && other.id == id);
+      identical(this, other) || (other is LocalMeshMessage && other.id == id);
 
   @override
   int get hashCode => id.hashCode;
@@ -92,3 +108,5 @@ class LocalMeshMessage {
       'LocalMeshMessage(id: $id, type: $type, from: $senderId, '
       'to: $recipientId, hop: $hopCount/$ttl, ts: $lamportTs)';
 }
+
+const Object _unchanged = Object();

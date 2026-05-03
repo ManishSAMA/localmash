@@ -30,6 +30,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Future<void> _startMesh() async {
     if (_meshState == _MeshState.running) return;
     final manager = ref.read(transportManagerProvider);
+    final ctrl = await ref.read(messageControllerProvider.future);
+    await ctrl.start();
     if (manager.transports.isNotEmpty &&
         manager.transports.every((t) => t.state == TransportState.running)) {
       setState(() => _meshState = _MeshState.running);
@@ -41,8 +43,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
     try {
       await manager.start();
-      final ctrl = await ref.read(messageControllerProvider.future);
-      await ctrl.start();
       if (mounted) setState(() => _meshState = _MeshState.running);
     } catch (e) {
       if (mounted) {
@@ -96,16 +96,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     }
     if (statuses.any((s) => s.state == TransportState.running)) {
-      final peerCount =
-          statuses.fold<int>(0, (sum, s) => sum + s.connectedPeers.length);
+      final peerCount = statuses.fold<int>(
+        0,
+        (sum, s) => sum + s.connectedPeers.length,
+      );
       return _RuntimeMeshStatus(
         state: _MeshState.running,
         message: peerCount == 0 ? 'No peers nearby' : 'Peer connected',
         discoveryEnabled: true,
       );
     }
-    if (statuses
-        .any((s) => s.state == TransportState.starting || s.discoveryInProgress)) {
+    if (statuses.any(
+      (s) => s.state == TransportState.starting || s.discoveryInProgress,
+    )) {
       return const _RuntimeMeshStatus(
         state: _MeshState.starting,
         message: 'Discovery in progress',
@@ -123,26 +126,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final nearbyAsync = ref.watch(nearbyPeersProvider);
     final chatsAsync = ref.watch(connectedPeersProvider);
-    final topologyAsync = ref.watch(meshTopologyProvider);
     final statusesAsync = ref.watch(transportStatusesProvider);
     final diagnosticsAsync = ref.watch(meshDiagnosticsProvider);
     final runtime = _runtimeStatus(statusesAsync.valueOrNull ?? const []);
-    final effectiveState =
-        runtime.state == _MeshState.idle ? _meshState : runtime.state;
-    final effectiveMessage = runtime.message ??
+    final effectiveState = runtime.state == _MeshState.idle
+        ? _meshState
+        : runtime.state;
+    final effectiveMessage =
+        runtime.message ??
         (effectiveState == _MeshState.error ? _meshError : null);
-    final maxHopDepth =
-        diagnosticsAsync.valueOrNull?.maxHopDepth ?? 0;
+    final maxHopDepth = diagnosticsAsync.valueOrNull?.maxHopDepth ?? 0;
     final scheme = Theme.of(context).colorScheme;
 
     ref.listen<AsyncValue<String>>(transportErrorsProvider, (_, next) {
       next.whenData((msg) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Mesh error: $msg'),
-          backgroundColor: scheme.error,
-          duration: const Duration(seconds: 6),
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Mesh error: $msg'),
+            backgroundColor: scheme.error,
+            duration: const Duration(seconds: 6),
+          ),
+        );
         setState(() => _meshState = _MeshState.error);
       });
     });
@@ -279,12 +284,14 @@ class _DashboardTab extends ConsumerWidget {
               child: InkWell(
                 onTap: discoveryEnabled
                     ? () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Emergency broadcast — mesh transmit pending'),
-                    ),
-                  );
-                }
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Emergency broadcast — mesh transmit pending',
+                            ),
+                          ),
+                        );
+                      }
                     : null,
                 borderRadius: BorderRadius.circular(8),
                 child: const Padding(
@@ -326,7 +333,9 @@ class _DashboardTab extends ConsumerWidget {
                       child: _StatCard(
                         title: 'ACTIVE PEERS',
                         value: '$actualPeerCount',
-                        subtitle: actualPeerCount == 0 ? 'NO PEERS' : 'CONNECTED',
+                        subtitle: actualPeerCount == 0
+                            ? 'NO PEERS'
+                            : 'CONNECTED',
                         accent: scheme.primary,
                       ),
                     ),
@@ -371,9 +380,7 @@ class _DashboardTab extends ConsumerWidget {
               ),
             ),
           ),
-          _NearbySliver(
-            nearbyAsync: nearbyAsync,
-          ),
+          _NearbySliver(nearbyAsync: nearbyAsync),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -414,10 +421,7 @@ class _DashboardTab extends ConsumerWidget {
 }
 
 class _NetworkHealthSummary extends StatelessWidget {
-  const _NetworkHealthSummary({
-    required this.status,
-    required this.detail,
-  });
+  const _NetworkHealthSummary({required this.status, required this.detail});
 
   final String status;
   final String detail;
@@ -442,9 +446,9 @@ class _NetworkHealthSummary extends StatelessWidget {
                 Text(
                   status,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 Text(
                   detail,
@@ -518,9 +522,9 @@ class _StatCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               value,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: Colors.white,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineMedium?.copyWith(color: Colors.white),
             ),
             const SizedBox(height: 4),
             Text(
@@ -539,16 +543,15 @@ class _StatCard extends StatelessWidget {
 }
 
 class _NearbySliver extends ConsumerWidget {
-  const _NearbySliver({
-    required this.nearbyAsync,
-  });
+  const _NearbySliver({required this.nearbyAsync});
 
   final AsyncValue<List<Peer>> nearbyAsync;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
-    final states = ref.watch(peerHandshakeStatesProvider).valueOrNull ??
+    final states =
+        ref.watch(peerHandshakeStatesProvider).valueOrNull ??
         const <String, PeerHandshakeState>{};
     return nearbyAsync.when(
       loading: () => const SliverToBoxAdapter(
@@ -570,106 +573,106 @@ class _NearbySliver extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
               child: Text(
                 'No peers nearby — enable Bluetooth',
-                style: TextStyle(
-                  color: scheme.onSurfaceVariant,
-                  fontSize: 13,
-                ),
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
               ),
             ),
           );
         }
         return SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, i) {
-              final p = peers[i];
-              final state = states[p.id] ??
-                  (p.signingPublicKey.isEmpty
-                      ? PeerHandshakeState.connecting
-                      : PeerHandshakeState.trustPending);
-              final isProvisional = p.signingPublicKey.isEmpty &&
-                  state != PeerHandshakeState.failed;
-              final isFailed = state == PeerHandshakeState.failed;
-              final initials = p.displayName.isNotEmpty
-                  ? p.displayName[0].toUpperCase()
-                  : '?';
-              final radio = _transportLabel(p);
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: scheme.secondaryContainer,
-                    child: isProvisional
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: scheme.onSecondaryContainer,
-                            ),
-                          )
-                        : isFailed
-                            ? Icon(Icons.error_outline,
-                                color: scheme.onSecondaryContainer, size: 18)
-                            : Text(
-                                initials,
-                                style: TextStyle(
-                                  color: scheme.onSecondaryContainer,
-                                ),
-                              ),
-                  ),
-                  title: Text(
-                    p.displayName.isNotEmpty
-                        ? p.displayName
-                        : (p.id.length > 12 ? p.id.substring(0, 12) : p.id),
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
-                  subtitle: Text(
-                    isProvisional
-                        ? 'Exchanging keys…'
-                        : isFailed
-                            ? 'KEY EXCHANGE FAILED'
-                            : 'LAST SEEN • ${_formatLastSeen(p.lastSeen)}',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  trailing: radio == null
-                      ? null
-                      : Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
+          delegate: SliverChildBuilderDelegate((context, i) {
+            final p = peers[i];
+            final state =
+                states[p.id] ??
+                (p.signingPublicKey.isEmpty
+                    ? PeerHandshakeState.connecting
+                    : PeerHandshakeState.trustPending);
+            final isProvisional =
+                p.signingPublicKey.isEmpty &&
+                state != PeerHandshakeState.failed;
+            final isFailed = state == PeerHandshakeState.failed;
+            final initials = p.displayName.isNotEmpty
+                ? p.displayName[0].toUpperCase()
+                : '?';
+            final radio = _transportLabel(p);
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: scheme.secondaryContainer,
+                  child: isProvisional
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.onSecondaryContainer,
                           ),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: LocalMeshColors.borderMuted),
-                            borderRadius: BorderRadius.circular(4),
+                        )
+                      : isFailed
+                      ? Icon(
+                          Icons.error_outline,
+                          color: scheme.onSecondaryContainer,
+                          size: 18,
+                        )
+                      : Text(
+                          initials,
+                          style: TextStyle(color: scheme.onSecondaryContainer),
+                        ),
+                ),
+                title: Text(
+                  p.displayName.isNotEmpty
+                      ? p.displayName
+                      : (p.id.length > 12 ? p.id.substring(0, 12) : p.id),
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
+                subtitle: Text(
+                  isProvisional
+                      ? 'Exchanging keys…'
+                      : isFailed
+                      ? 'KEY EXCHANGE FAILED'
+                      : 'LAST SEEN • ${_formatLastSeen(p.lastSeen)}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                trailing: radio == null
+                    ? null
+                    : Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: LocalMeshColors.borderMuted,
                           ),
-                          child: Text(
-                            radio,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 9,
-                              color: LocalMeshColors.textSecondary,
-                            ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          radio,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 9,
+                            color: LocalMeshColors.textSecondary,
                           ),
                         ),
-                  onTap: isProvisional || isFailed
-                      ? null
-                      : () => showDialog<void>(
-                            context: context,
-                            builder: (_) => _FingerprintDialog(peer: p),
-                          ),
-                ),
-              );
-            },
-            childCount: peers.length,
-          ),
+                      ),
+                onTap: isProvisional || isFailed
+                    ? null
+                    : () => showDialog<void>(
+                        context: context,
+                        builder: (_) => _FingerprintDialog(peer: p),
+                      ),
+              ),
+            );
+          }, childCount: peers.length),
         );
       },
     );
   }
 
   String _formatLastSeen(int lastSeenMs) {
-    final d =
-        DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(lastSeenMs));
+    final d = DateTime.now().difference(
+      DateTime.fromMillisecondsSinceEpoch(lastSeenMs),
+    );
     if (d.inSeconds < 60) return '${d.inSeconds}s';
     if (d.inMinutes < 60) return '${d.inMinutes}m';
     return '${d.inHours}h';
@@ -732,45 +735,42 @@ class _ChatTab extends ConsumerWidget {
               );
             }
             return SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, i) {
-                  final p = peers[i];
-                  final initials = p.displayName.isNotEmpty
-                      ? p.displayName[0].toUpperCase()
-                      : '?';
-                  return Card(
-                    margin:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: scheme.primary.withValues(alpha: 0.2),
-                        child: Text(
-                          initials,
-                          style: TextStyle(color: scheme.primary),
-                        ),
-                      ),
-                      title: Text(
-                        p.displayName.isNotEmpty
-                            ? p.displayName
-                            : p.id.substring(0, 12),
-                        style: const TextStyle(fontFamily: 'monospace'),
-                      ),
-                      subtitle: Text(
-                        p.id,
-                        style: const TextStyle(fontSize: 11),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => ChatScreen(peer: p),
-                        ),
+              delegate: SliverChildBuilderDelegate((context, i) {
+                final p = peers[i];
+                final initials = p.displayName.isNotEmpty
+                    ? p.displayName[0].toUpperCase()
+                    : '?';
+                return Card(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: scheme.primary.withValues(alpha: 0.2),
+                      child: Text(
+                        initials,
+                        style: TextStyle(color: scheme.primary),
                       ),
                     ),
-                  );
-                },
-                childCount: peers.length,
-              ),
+                    title: Text(
+                      p.displayName.isNotEmpty
+                          ? p.displayName
+                          : p.id.substring(0, 12),
+                      style: const TextStyle(fontFamily: 'monospace'),
+                    ),
+                    subtitle: Text(
+                      p.id,
+                      style: const TextStyle(fontSize: 11),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => ChatScreen(peer: p)),
+                    ),
+                  ),
+                );
+              }, childCount: peers.length),
             );
           },
         ),
@@ -790,7 +790,11 @@ class _FilesTab extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.folder_open, size: 48, color: Theme.of(context).colorScheme.primary),
+            Icon(
+              Icons.folder_open,
+              size: 48,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(height: 16),
             Text(
               'SECURE FILE TRANSFER',
@@ -814,8 +818,7 @@ class _FingerprintDialog extends ConsumerStatefulWidget {
   final Peer peer;
 
   @override
-  ConsumerState<_FingerprintDialog> createState() =>
-      _FingerprintDialogState();
+  ConsumerState<_FingerprintDialog> createState() => _FingerprintDialogState();
 }
 
 class _FingerprintDialogState extends ConsumerState<_FingerprintDialog> {
@@ -831,9 +834,11 @@ class _FingerprintDialogState extends ConsumerState<_FingerprintDialog> {
     }
     final lines = <String>[];
     for (var i = 0; i < groups.length; i += 8) {
-      lines.add(groups
-          .sublist(i, i + 8 < groups.length ? i + 8 : groups.length)
-          .join(' '));
+      lines.add(
+        groups
+            .sublist(i, i + 8 < groups.length ? i + 8 : groups.length)
+            .join(' '),
+      );
     }
     return lines.join('\n');
   }
@@ -947,10 +952,11 @@ class _MeshStatusBar extends StatelessWidget {
     return switch (state) {
       _MeshState.idle => const SizedBox.shrink(),
       _MeshState.starting => Container(
-          width: double.infinity,
-          color: LocalMeshColors.surfaceCard,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(children: [
+        width: double.infinity,
+        color: LocalMeshColors.surfaceCard,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
             SizedBox(
               width: 16,
               height: 16,
@@ -967,13 +973,15 @@ class _MeshStatusBar extends StatelessWidget {
                 color: scheme.onSurfaceVariant,
               ),
             ),
-          ]),
+          ],
         ),
+      ),
       _MeshState.running => Container(
-          width: double.infinity,
-          color: LocalMeshColors.surfaceCard,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(children: [
+        width: double.infinity,
+        color: LocalMeshColors.surfaceCard,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
             Icon(Icons.wifi_tethering, color: scheme.primary, size: 18),
             const SizedBox(width: 8),
             Text(
@@ -984,13 +992,15 @@ class _MeshStatusBar extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
-          ]),
+          ],
         ),
+      ),
       _MeshState.error => Container(
-          width: double.infinity,
-          color: scheme.errorContainer,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(children: [
+        width: double.infinity,
+        color: scheme.errorContainer,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
             Icon(Icons.error_outline, color: scheme.onErrorContainer, size: 18),
             const SizedBox(width: 8),
             Expanded(
@@ -1003,11 +1013,14 @@ class _MeshStatusBar extends StatelessWidget {
             ),
             TextButton(
               onPressed: retryEnabled ? onRetry : null,
-              child: Text('Retry',
-                  style: TextStyle(color: scheme.onErrorContainer)),
+              child: Text(
+                'Retry',
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
             ),
-          ]),
+          ],
         ),
+      ),
     };
   }
 }

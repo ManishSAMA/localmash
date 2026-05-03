@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:domain/domain.dart';
 import '../theme/app_theme.dart';
 
 /// Tactical chat row: mine = right / neon green; theirs = left / grey panel.
@@ -11,6 +12,7 @@ class ChatMessageRow extends StatelessWidget {
     this.senderLabel,
     this.hopCount = 0,
     this.showRelayIcons = true,
+    this.deliveryStatus = MessageDeliveryStatus.received,
   });
 
   final bool isMine;
@@ -19,6 +21,7 @@ class ChatMessageRow extends StatelessWidget {
   final String? senderLabel;
   final int hopCount;
   final bool showRelayIcons;
+  final MessageDeliveryStatus deliveryStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -79,13 +82,7 @@ class ChatMessageRow extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             if (showRelayIcons) ...[
-              Icon(
-                hopCount > 0 ? Icons.sync_alt : Icons.done_all,
-                size: 15,
-                color: hopCount > 0
-                    ? LocalMeshColors.textSecondary
-                    : LocalMeshColors.accent,
-              ),
+              _DeliveryIcon(status: deliveryStatus, hopCount: hopCount),
             ],
           ],
         ),
@@ -114,8 +111,10 @@ class ChatMessageRow extends StatelessWidget {
               const SizedBox(width: 8),
               if (hopCount == 0)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(color: LocalMeshColors.accent, width: 1),
                     borderRadius: BorderRadius.circular(4),
@@ -132,8 +131,10 @@ class ChatMessageRow extends StatelessWidget {
                 )
               else
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: LocalMeshColors.surfaceCard,
                     borderRadius: BorderRadius.circular(4),
@@ -187,5 +188,36 @@ class ChatMessageRow extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _DeliveryIcon extends StatelessWidget {
+  const _DeliveryIcon({required this.status, required this.hopCount});
+
+  final MessageDeliveryStatus status;
+  final int hopCount;
+
+  @override
+  Widget build(BuildContext context) {
+    late final IconData icon;
+    late final Color color;
+    switch (status) {
+      case MessageDeliveryStatus.sending:
+        icon = Icons.schedule;
+        color = LocalMeshColors.textSecondary;
+        break;
+      case MessageDeliveryStatus.failed:
+        icon = Icons.error_outline;
+        color = Theme.of(context).colorScheme.error;
+        break;
+      case MessageDeliveryStatus.delivered:
+      case MessageDeliveryStatus.received:
+        icon = hopCount > 0 ? Icons.sync_alt : Icons.done_all;
+        color = hopCount > 0
+            ? LocalMeshColors.textSecondary
+            : LocalMeshColors.accent;
+        break;
+    }
+    return Icon(icon, size: 15, color: color);
   }
 }

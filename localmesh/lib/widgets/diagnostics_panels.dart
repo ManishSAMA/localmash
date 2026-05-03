@@ -4,10 +4,7 @@ import '../theme/app_theme.dart';
 
 /// Latency line chart — reference DIAGS screen (green trace, T-60s → NOW).
 class LatencyPerHopPanel extends StatelessWidget {
-  const LatencyPerHopPanel({
-    super.key,
-    this.samples = const [],
-  });
+  const LatencyPerHopPanel({super.key, this.samples = const []});
 
   final List<int> samples;
 
@@ -25,22 +22,26 @@ class LatencyPerHopPanel extends StatelessWidget {
                   child: Text(
                     'LATENCY_PER_HOP (MS)',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          letterSpacing: 1,
-                          color: LocalMeshColors.textSecondary,
-                        ),
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      letterSpacing: 1,
+                      color: LocalMeshColors.textSecondary,
+                    ),
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(color: LocalMeshColors.accent),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    samples.isEmpty ? 'Not enough data' : 'CUR: ${samples.last}ms',
+                    samples.isEmpty
+                        ? 'Not enough data'
+                        : 'CUR: ${samples.last}ms',
                     style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 10,
@@ -106,7 +107,9 @@ class _LatencyLinePainter extends CustomPainter {
     final path = Path();
     final maxSample = samples.reduce((a, b) => a > b ? a : b).clamp(1, 100000);
     for (var i = 0; i < samples.length; i++) {
-      final x = samples.length == 1 ? size.width : size.width * i / (samples.length - 1);
+      final x = samples.length == 1
+          ? size.width
+          : size.width * i / (samples.length - 1);
       final normalized = (samples[i] / maxSample).clamp(0.0, 1.0);
       final y = size.height * (1 - normalized);
       if (i == 0) {
@@ -147,16 +150,18 @@ class BatteryDrainPanel extends StatelessWidget {
                   child: Text(
                     'BATT_DRAIN (%/HR)',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          letterSpacing: 1,
-                          color: LocalMeshColors.textSecondary,
-                        ),
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      letterSpacing: 1,
+                      color: LocalMeshColors.textSecondary,
+                    ),
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(color: LocalMeshColors.borderMuted),
                     borderRadius: BorderRadius.circular(4),
@@ -165,7 +170,7 @@ class BatteryDrainPanel extends StatelessWidget {
                     meshImpactPercentPerHour == null
                         ? 'Not enough data'
                         : 'CUR: ${meshImpactPercentPerHour!.toStringAsFixed(1)}%',
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 10,
                       color: LocalMeshColors.textSecondary,
@@ -234,16 +239,18 @@ class RoutingEventsLogPanel extends StatelessWidget {
                   child: Text(
                     'ROUTING_EVENTS_LOG',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          letterSpacing: 1,
-                          color: LocalMeshColors.textSecondary,
-                        ),
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      letterSpacing: 1,
+                      color: LocalMeshColors.textSecondary,
+                    ),
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(color: LocalMeshColors.accent),
                     borderRadius: BorderRadius.circular(4),
@@ -333,8 +340,9 @@ class _LogDataRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDrop = row.status == 'DROP';
-    final statusColor =
-        isDrop ? const Color(0xFFFF6B6B) : LocalMeshColors.accent;
+    final statusColor = isDrop
+        ? const Color(0xFFFF6B6B)
+        : LocalMeshColors.accent;
     final payloadStyle = TextStyle(
       fontFamily: 'monospace',
       fontSize: 9,
@@ -356,9 +364,7 @@ class _LogDataRow extends StatelessWidget {
               ),
             ),
           ),
-          Expanded(
-            child: Text(row.payload, style: payloadStyle),
-          ),
+          Expanded(child: Text(row.payload, style: payloadStyle)),
           SizedBox(
             width: 44,
             child: Text(
@@ -392,11 +398,11 @@ class _EmptyMetricText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        text,
-        style: const TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 11,
-          color: LocalMeshColors.textSecondary,
-        ),
-      );
+    text,
+    style: const TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 11,
+      color: LocalMeshColors.textSecondary,
+    ),
+  );
 }

@@ -9,8 +9,8 @@ import 'ble_frame_buffer.dart';
 
 // LocalMesh BLE service/characteristic UUIDs — must match across all devices
 const String _serviceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-const String _txCharUuid  = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // write
-const String _rxCharUuid  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // notify
+const String _txCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // write
+const String _rxCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // notify
 const int _bleChunkSize = 200;
 const int _bleFrameHeaderSize = 2;
 
@@ -32,11 +32,13 @@ class BleTransport implements Transport {
   StreamSubscription<DiscoveredDevice>? _scanSub;
   StreamSubscription<BleStatus>? _bleStatusSub;
   StreamSubscription<BleGattServerEvent>? _gattServerSub;
+  Timer? _scanRestartTimer;
   final List<StreamSubscription<dynamic>> _connectionSubs = [];
   final AndroidBleGattServer _gattServer = AndroidBleGattServer();
   final Map<String, BleFrameBuffer> _frameBuffers = {};
   final StreamController<String> _errorCtrl =
       StreamController<String>.broadcast();
+  bool _batterySaver = false;
 
   @override
   String get name => 'ble';
@@ -54,8 +56,10 @@ class BleTransport implements Transport {
   Stream<TransportStatus> get status => _statusCtrl.stream;
 
   @override
-  List<String> get connectedPeers =>
-      _peers.entries.where((e) => e.value.isConnected).map((e) => e.key).toList();
+  List<String> get connectedPeers => _peers.entries
+      .where((e) => e.value.isConnected)
+      .map((e) => e.key)
+      .toList();
 
   @override
   bool hasPeer(String peerId) => _peers[peerId]?.isConnected ?? false;
@@ -64,7 +68,9 @@ class BleTransport implements Transport {
 
   @override
   Future<void> start() async {
-    if (_state == TransportState.running || _state == TransportState.starting) return;
+    if (_state == TransportState.running || _state == TransportState.starting) {
+      return;
+    }
     _state = TransportState.starting;
     _emitStatus(discoveryInProgress: false);
     debugPrint('[TRANSPORT][BLE] starting transport for "$myDeviceName"');
@@ -96,7 +102,8 @@ class BleTransport implements Transport {
       _state = TransportState.error;
       _emitStatus(
         issue: TransportIssue.discoveryFailed,
-        message: result.error ?? 'Failed to start Android GATT server/advertising',
+        message:
+            result.error ?? 'Failed to start Android GATT server/advertising',
       );
       throw TransportException(
         'ble',
@@ -106,30 +113,59 @@ class BleTransport implements Transport {
     debugPrint(
       '[TRANSPORT][BLE] Android GATT server active, starting BLE scan for $_serviceUuid',
     );
+    await _startScan(reason: 'startup');
+    _state = TransportState.running;
+    _emitStatus(discoveryInProgress: true);
+    debugPrint('[TRANSPORT][BLE] transport running');
+  }
+
+  Future<void> _startScan({required String reason}) async {
+    await _scanSub?.cancel();
+    _scanSub = null;
+    final mode = _batterySaver ? ScanMode.lowPower : ScanMode.lowLatency;
+    debugPrint(
+      '[TRANSPORT][BLE] scan started reason=$reason service=$_serviceUuid mode=$mode',
+    );
     _scanSub = _ble.scanForDevices(
       withServices: [Uuid.parse(_serviceUuid)],
-      scanMode: ScanMode.lowLatency,
+      scanMode: mode,
     ).listen(
       (device) async {
         debugPrint(
-          '[TRANSPORT][BLE] peer discovered id=${device.id} name="${device.name}"',
+          '[TRANSPORT][BLE] device discovered id=${device.id} name="${device.name}" '
+          'rssi=${device.rssi} serviceData=${device.serviceData.keys.length}',
         );
         final peer = _peers[device.id];
         if (peer?.centralConnected == true) return;
         await _connectToPeer(device);
       },
       onError: (Object e) {
-        _state = TransportState.error;
         _emitStatus(
           issue: TransportIssue.discoveryFailed,
           message: 'BLE discovery failed: $e',
+          discoveryInProgress: true,
         );
         debugPrint('[TRANSPORT][BLE] scan failed: $e');
+        _errorCtrl.add('BLE scan failed: $e');
+        unawaited(_restartScanAfterBackoff());
       },
     );
-    _state = TransportState.running;
-    _emitStatus(discoveryInProgress: true);
-    debugPrint('[TRANSPORT][BLE] transport running');
+    _scanRestartTimer?.cancel();
+    _scanRestartTimer = Timer(const Duration(seconds: 30), () {
+      if (_state == TransportState.running) {
+        unawaited(_startScan(reason: 'periodic-recovery'));
+      }
+    });
+  }
+
+  Future<void> _restartScanAfterBackoff() async {
+    if (_state != TransportState.running && _state != TransportState.starting) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (_state == TransportState.running || _state == TransportState.starting) {
+      await _startScan(reason: 'error-recovery');
+    }
   }
 
   Future<void> _connectToPeer(DiscoveredDevice device) async {
@@ -142,15 +178,18 @@ class BleTransport implements Transport {
     debugPrint(
       '[TRANSPORT][BLE] connecting to ${device.id} name="${device.name}"',
     );
-    final connSub = _ble.connectToDevice(
+    final connSub = _ble
+        .connectToDevice(
       id: device.id,
       connectionTimeout: const Duration(seconds: 10),
-    ).listen((update) async {
+    )
+        .listen((update) async {
       if (update.connectionState == DeviceConnectionState.connected) {
         peer.connectionInProgress = false;
         peer.centralConnected = true;
         peer.displayName = device.name.isEmpty ? peer.displayName : device.name;
-        debugPrint('[TRANSPORT][BLE] central connection established to ${device.id}');
+        debugPrint(
+            '[TRANSPORT][BLE] central connection established to ${device.id}');
         _emitPeerEvent(
           peer,
           connected: true,
@@ -161,7 +200,8 @@ class BleTransport implements Transport {
       } else if (update.connectionState == DeviceConnectionState.disconnected) {
         peer.connectionInProgress = false;
         peer.centralConnected = false;
-        debugPrint('[TRANSPORT][BLE] central connection disconnected from ${device.id}');
+        debugPrint(
+            '[TRANSPORT][BLE] central connection disconnected from ${device.id}');
         _emitPeerEvent(
           peer,
           connected: false,
@@ -182,7 +222,8 @@ class BleTransport implements Transport {
       characteristicId: Uuid.parse(_rxCharUuid),
       deviceId: deviceId,
     );
-    debugPrint('[TRANSPORT][BLE] subscribing to RX characteristic for $deviceId');
+    debugPrint(
+        '[TRANSPORT][BLE] subscribing to RX characteristic for $deviceId');
     final sub = _ble.subscribeToCharacteristic(char).listen((data) {
       final chunk = Uint8List.fromList(data);
       if (chunk.isNotEmpty) {
@@ -215,7 +256,8 @@ class BleTransport implements Transport {
     throw TransportException('ble', 'Peer $peerId has no active BLE path');
   }
 
-  Future<void> _writeToCentralConnection(String peerId, Uint8List framed) async {
+  Future<void> _writeToCentralConnection(
+      String peerId, Uint8List framed) async {
     final char = QualifiedCharacteristic(
       serviceId: Uuid.parse(_serviceUuid),
       characteristicId: Uuid.parse(_txCharUuid),
@@ -226,8 +268,9 @@ class BleTransport implements Transport {
     );
     final chunks = <Uint8List>[];
     for (var i = 0; i < framed.length; i += _bleChunkSize) {
-      final end =
-          (i + _bleChunkSize > framed.length) ? framed.length : i + _bleChunkSize;
+      final end = (i + _bleChunkSize > framed.length)
+          ? framed.length
+          : i + _bleChunkSize;
       chunks.add(framed.sublist(i, end));
     }
     for (final chunk in chunks) {
@@ -243,13 +286,15 @@ class BleTransport implements Transport {
     }
   }
 
-  Future<void> _notifyPeripheralConnection(String peerId, Uint8List framed) async {
+  Future<void> _notifyPeripheralConnection(
+      String peerId, Uint8List framed) async {
     debugPrint(
       '[TRANSPORT][BLE] sending ${framed.length} bytes to $peerId via peripheral notify',
     );
     for (var i = 0; i < framed.length; i += _bleChunkSize) {
-      final end =
-          (i + _bleChunkSize > framed.length) ? framed.length : i + _bleChunkSize;
+      final end = (i + _bleChunkSize > framed.length)
+          ? framed.length
+          : i + _bleChunkSize;
       final chunk = Uint8List.sublistView(framed, i, end);
       if (chunk.isNotEmpty) {
         debugPrint(
@@ -266,40 +311,17 @@ class BleTransport implements Transport {
   @override
   Future<void> broadcast(Uint8List data) async {
     await Future.wait([
-      for (final p in connectedPeers)
-        sendTo(p, data).catchError((_) {}),
+      for (final p in connectedPeers) sendTo(p, data).catchError((_) {}),
     ]);
   }
 
   @override
   Future<void> updateBatterySaver(bool enabled) async {
     if (_state != TransportState.running) return;
-    
-    // Restart scan with new mode
-    await _scanSub?.cancel();
-    _emitStatus(discoveryInProgress: false);
-    _scanSub = _ble.scanForDevices(
-      withServices: [Uuid.parse(_serviceUuid)],
-      scanMode: enabled ? ScanMode.lowPower : ScanMode.lowLatency,
-    ).listen(
-      (device) async {
-        debugPrint(
-          '[TRANSPORT][BLE] peer discovered id=${device.id} name="${device.name}"',
-        );
-        final peer = _peers[device.id];
-        if (peer?.centralConnected == true) return;
-        await _connectToPeer(device);
-      },
-      onError: (Object e) {
-        _state = TransportState.error;
-        _emitStatus(
-          issue: TransportIssue.discoveryFailed,
-          message: 'BLE discovery failed: $e',
-        );
-        debugPrint('[TRANSPORT][BLE] scan failed: $e');
-      },
-    );
-    debugPrint('[TRANSPORT][BLE] battery saver ${enabled ? 'on' : 'off'} (ScanMode updated)');
+    _batterySaver = enabled;
+    await _startScan(reason: 'battery-saver-${enabled ? 'on' : 'off'}');
+    debugPrint(
+        '[TRANSPORT][BLE] battery saver ${enabled ? 'on' : 'off'} (ScanMode updated)');
   }
 
   @override
@@ -313,6 +335,8 @@ class BleTransport implements Transport {
     _gattServerSub = null;
     await _gattServer.stop();
     await _scanSub?.cancel();
+    _scanRestartTimer?.cancel();
+    _scanRestartTimer = null;
     for (final sub in _connectionSubs) {
       await sub.cancel();
     }
@@ -344,7 +368,8 @@ class BleTransport implements Transport {
     }
     if (event.type == 'advertiseError') {
       _state = TransportState.error;
-      final msg = 'BLE advertising failed (${event.message}) — mesh unavailable';
+      final msg =
+          'BLE advertising failed (${event.message}) — mesh unavailable';
       debugPrint('[TRANSPORT][BLE] $msg');
       _emitStatus(issue: TransportIssue.discoveryFailed, message: msg);
       _errorCtrl.add(msg);
@@ -473,7 +498,8 @@ class BleTransport implements Transport {
         connected: false,
         transportName: 'ble',
       ));
-      debugPrint('[TRANSPORT][BLE] peer ${peer.deviceId} disconnected ($reason)');
+      debugPrint(
+          '[TRANSPORT][BLE] peer ${peer.deviceId} disconnected ($reason)');
     }
   }
 

@@ -20,9 +20,11 @@ Future<void> setupServiceLocator() async {
   getIt.registerLazySingleton<MessageRepository>(() => HiveMessageRepository());
   getIt.registerLazySingleton<PeerRepository>(() => HivePeerRepository());
   getIt.registerLazySingleton<IdentityRepository>(
-      () => HiveIdentityRepository());
+    () => HiveIdentityRepository(),
+  );
   getIt.registerLazySingleton<ChatRoomRepository>(
-      () => HiveChatRoomRepository());
+    () => HiveChatRoomRepository(),
+  );
 
   // Lamport clock — one per device
   getIt.registerLazySingleton<LamportClock>(() => LamportClock());
@@ -45,22 +47,25 @@ Future<void> setupServiceLocator() async {
     ]),
   );
 
-
   // Use cases
-  getIt.registerFactory<CreateIdentity>(() => CreateIdentity(
-        generator: getIt<IdentityGenerator>(),
-        repository: getIt<IdentityRepository>(),
-      ));
+  getIt.registerFactory<CreateIdentity>(
+    () => CreateIdentity(
+      generator: getIt<IdentityGenerator>(),
+      repository: getIt<IdentityRepository>(),
+    ),
+  );
 
-  getIt.registerFactory<SendMessage>(() => SendMessage(
-        identityRepo: getIt<IdentityRepository>(),
-        peerRepo: getIt<PeerRepository>(),
-        messageRepo: getIt<MessageRepository>(),
-        encryptor: getIt<MessageEncryptor>(),
-        signer: getIt<MessageSigner>(),
-        keyDeriver: getIt<SessionKeyDeriver>(),
-        clock: getIt<LamportClock>(),
-      ));
+  getIt.registerFactory<SendMessage>(
+    () => SendMessage(
+      identityRepo: getIt<IdentityRepository>(),
+      peerRepo: getIt<PeerRepository>(),
+      messageRepo: getIt<MessageRepository>(),
+      encryptor: getIt<MessageEncryptor>(),
+      signer: getIt<MessageSigner>(),
+      keyDeriver: getIt<SessionKeyDeriver>(),
+      clock: getIt<LamportClock>(),
+    ),
+  );
 
   // MeshRouter — needs identity fingerprint and peer key lookup.
   // Registered as async singleton; resolved lazily on first access.
@@ -80,32 +85,36 @@ Future<void> setupServiceLocator() async {
     );
   });
 
-  getIt.registerFactoryAsync<ReceiveMessage>(() async => ReceiveMessage(
-        router: await getIt.getAsync<MeshRouter>(),
-        identityRepo: getIt<IdentityRepository>(),
-        peerRepo: getIt<PeerRepository>(),
-        messageRepo: getIt<MessageRepository>(),
-        encryptor: getIt<MessageEncryptor>(),
-        keyDeriver: getIt<SessionKeyDeriver>(),
-        clock: getIt<LamportClock>(),
-      ));
+  getIt.registerFactoryAsync<ReceiveMessage>(
+    () async => ReceiveMessage(
+      router: await getIt.getAsync<MeshRouter>(),
+      identityRepo: getIt<IdentityRepository>(),
+      peerRepo: getIt<PeerRepository>(),
+      messageRepo: getIt<MessageRepository>(),
+      encryptor: getIt<MessageEncryptor>(),
+      keyDeriver: getIt<SessionKeyDeriver>(),
+      clock: getIt<LamportClock>(),
+    ),
+  );
 
-  getIt.registerFactory<SyncHistory>(() => SyncHistory(
-        messageRepo: getIt<MessageRepository>(),
-      ));
+  getIt.registerFactory<SyncHistory>(
+    () => SyncHistory(messageRepo: getIt<MessageRepository>()),
+  );
 
   // MessageController — singleton; depends on async MeshRouter.
-  getIt.registerLazySingletonAsync<MessageController>(() async =>
-      MessageController(
-        transportManager: getIt<TransportManager>(),
-        receiveMessage: await getIt.getAsync<ReceiveMessage>(),
-        sendMessage: getIt<SendMessage>(),
-        syncHistory: getIt<SyncHistory>(),
-        peerRepo: getIt<PeerRepository>(),
-        identityRepo: getIt<IdentityRepository>(),
-        signer: getIt<MessageSigner>(),
-        identityGenerator: getIt<IdentityGenerator>(),
-        encryptor: getIt<MessageEncryptor>(),
-        keyDeriver: getIt<SessionKeyDeriver>(),
-      ));
+  getIt.registerLazySingletonAsync<MessageController>(
+    () async => MessageController(
+      transportManager: getIt<TransportManager>(),
+      receiveMessage: await getIt.getAsync<ReceiveMessage>(),
+      sendMessage: getIt<SendMessage>(),
+      syncHistory: getIt<SyncHistory>(),
+      messageRepo: getIt<MessageRepository>(),
+      peerRepo: getIt<PeerRepository>(),
+      identityRepo: getIt<IdentityRepository>(),
+      signer: getIt<MessageSigner>(),
+      identityGenerator: getIt<IdentityGenerator>(),
+      encryptor: getIt<MessageEncryptor>(),
+      keyDeriver: getIt<SessionKeyDeriver>(),
+    ),
+  );
 }

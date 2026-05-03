@@ -100,7 +100,8 @@ void main() {
       expect(stored, isNotNull); // first call did persist it
     });
 
-    test('2. delivered and decryptable: persisted, plaintext matches', () async {
+    test('2. delivered and decryptable: persisted, plaintext matches',
+        () async {
       final identityRepo = FakeIdentityRepository();
       final peerRepo = FakePeerRepository();
       final messageRepo = FakeMessageRepository();
@@ -139,9 +140,13 @@ void main() {
 
       final stored = await messageRepo.getMessageById(msg.id);
       expect(stored, isNotNull);
+      expect(stored!.deliveryStatus, MessageDeliveryStatus.received);
+      expect(stored.plaintext, plaintext);
     });
 
-    test('3. delivered but decryption throws: envelope persisted, decrypted null', () async {
+    test(
+        '3. delivered but decryption throws: envelope persisted, decrypted null',
+        () async {
       final identityRepo = FakeIdentityRepository();
       final peerRepo = FakePeerRepository();
       final messageRepo = FakeMessageRepository();
@@ -164,6 +169,7 @@ void main() {
       // Envelope must still be persisted
       final stored = await messageRepo.getMessageById(msg.id);
       expect(stored, isNotNull);
+      expect(stored!.plaintext, isNull);
     });
 
     test('4. Lamport clock merges correctly on delivery', () async {
@@ -187,7 +193,9 @@ void main() {
       expect(clock.value, 11);
     });
 
-    test('5. forward-only: decrypted null, forwardMessage has incremented hopCount', () async {
+    test(
+        '5. forward-only: decrypted null, forwardMessage has incremented hopCount',
+        () async {
       // Message addressed to a third peer (not alice) — router should forward only
       final receive = _makeReceiveMessage();
       final msg = _makeMsg(recipientId: 'peer-c', hopCount: 0, ttl: 5);
@@ -201,7 +209,8 @@ void main() {
   });
 
   group('ReceiveMessage — content-type filtering', () {
-    test('6. PEER_ANNOUNCE messages are NOT saved to the message repository', () async {
+    test('6. PEER_ANNOUNCE messages are NOT saved to the message repository',
+        () async {
       final identityRepo = FakeIdentityRepository();
       final peerRepo = FakePeerRepository();
       final messageRepo = FakeMessageRepository();
@@ -232,10 +241,13 @@ void main() {
       await receive(announceMsg);
 
       final stored = await messageRepo.getMessageById(announceMsg.id);
-      expect(stored, isNull, reason: 'PEER_ANNOUNCE must not be persisted to the message repository');
+      expect(stored, isNull,
+          reason:
+              'PEER_ANNOUNCE must not be persisted to the message repository');
     });
 
-    test('7. SYNC_REQUEST messages are NOT saved to the message repository', () async {
+    test('7. SYNC_REQUEST messages are NOT saved to the message repository',
+        () async {
       final identityRepo = FakeIdentityRepository();
       final peerRepo = FakePeerRepository();
       final messageRepo = FakeMessageRepository();
@@ -266,7 +278,9 @@ void main() {
       await receive(syncMsg);
 
       final stored = await messageRepo.getMessageById(syncMsg.id);
-      expect(stored, isNull, reason: 'SYNC_REQUEST must not be persisted to the message repository');
+      expect(stored, isNull,
+          reason:
+              'SYNC_REQUEST must not be persisted to the message repository');
     });
 
     test('8. TEXT messages are still saved (regression guard)', () async {
@@ -287,7 +301,8 @@ void main() {
       await receive(textMsg);
 
       final stored = await messageRepo.getMessageById(textMsg.id);
-      expect(stored, isNotNull, reason: 'TEXT messages must still be persisted');
+      expect(stored, isNotNull,
+          reason: 'TEXT messages must still be persisted');
     });
   });
 }

@@ -137,6 +137,7 @@ class LocalMeshBleGattServer(private val context: Context) :
         if (!startAdvertising(localName)) {
             return mapOf("success" to false, "error" to (lastStartError ?: "Failed to start BLE advertising"))
         }
+        emitLog("BLE GATT server start requested; awaiting advertising callback")
         return mapOf("success" to true, "error" to null)
     }
 
@@ -260,6 +261,7 @@ class LocalMeshBleGattServer(private val context: Context) :
         return try {
             advertiser?.startAdvertising(settings, primaryData, scanResponse, callback)
             advertiseCallback = callback
+            emitLog("BLE advertising request submitted for $SERVICE_UUID")
             true
         } catch (t: Throwable) {
             lastStartError = "startAdvertising threw: ${t.message}"
@@ -310,12 +312,14 @@ class LocalMeshBleGattServer(private val context: Context) :
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
                     connectedDevices[peerId] = device
+                    emitLog("GATT peer connected $peerId")
                     emitPeerEvent("peerConnected", device)
                 }
 
                 BluetoothGatt.STATE_DISCONNECTED -> {
                     connectedDevices.remove(peerId)
                     subscribedDevices.remove(peerId)
+                    emitLog("GATT peer disconnected $peerId status=$status")
                     emitPeerEvent("peerDisconnected", device)
                 }
             }
@@ -331,7 +335,10 @@ class LocalMeshBleGattServer(private val context: Context) :
             value: ByteArray
         ) {
             if (characteristic.uuid == UUID.fromString(TX_CHAR_UUID)) {
+                emitLog("GATT write received from ${device.address} bytes=${value.size}")
                 emitDataEvent(device, value)
+            } else {
+                emitLog("GATT write ignored from ${device.address} char=${characteristic.uuid}")
             }
             if (responseNeeded && hasRequiredPermissions()) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)

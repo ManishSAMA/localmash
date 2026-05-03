@@ -18,6 +18,19 @@ class HiveMessageAdapter extends TypeAdapter<LocalMeshMessage> {
     final lamportTs = reader.readInt();
     final signature = reader.readByteList();
     final createdAt = reader.readInt();
+    var deliveryStatus = MessageDeliveryStatus.received;
+    String? plaintext;
+    try {
+      final statusIndex = reader.readInt();
+      if (statusIndex >= 0 &&
+          statusIndex < MessageDeliveryStatus.values.length) {
+        deliveryStatus = MessageDeliveryStatus.values[statusIndex];
+      }
+      plaintext = reader.readBool() ? reader.readString() : null;
+    } catch (_) {
+      deliveryStatus = MessageDeliveryStatus.received;
+      plaintext = null;
+    }
 
     return LocalMeshMessage(
       id: id,
@@ -31,6 +44,8 @@ class HiveMessageAdapter extends TypeAdapter<LocalMeshMessage> {
       lamportTs: lamportTs,
       signature: signature,
       createdAt: createdAt,
+      deliveryStatus: deliveryStatus,
+      plaintext: plaintext,
     );
   }
 
@@ -47,5 +62,10 @@ class HiveMessageAdapter extends TypeAdapter<LocalMeshMessage> {
     writer.writeInt(obj.lamportTs);
     writer.writeByteList(obj.signature);
     writer.writeInt(obj.createdAt);
+    writer.writeInt(obj.deliveryStatus.index);
+    writer.writeBool(obj.plaintext != null);
+    if (obj.plaintext != null) {
+      writer.writeString(obj.plaintext!);
+    }
   }
 }
