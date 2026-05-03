@@ -7,9 +7,12 @@ import 'providers/providers.dart';
 import 'screens/home_screen.dart';
 import 'screens/identity_setup_screen.dart';
 import 'screens/permissions_screen.dart';
+import 'theme/app_theme.dart';
+import 'app_start.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  recordLocalMeshAppStart();
   await HiveLocalDataSource.initialize();
   final encKey = await HiveLocalDataSource.getOrCreateBoxEncryptionKey();
   await HiveLocalDataSource.openAllBoxes(identityEncryptionKey: encKey);
@@ -24,10 +27,8 @@ class LocalMeshApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'LocalMesh',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
+      debugShowCheckedModeBanner: false,
+      theme: buildLocalMeshTheme(),
       home: const AppRouter(),
     );
   }
@@ -97,11 +98,60 @@ class _Splash extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: Center(
-        child: error != null
-            ? Text('Error: $error', style: const TextStyle(color: Colors.red))
-            : const CircularProgressIndicator(),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: error != null
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.error_outline, color: scheme.error, size: 48),
+                    const SizedBox(height: 16),
+                    Text(
+                      'BOOT FAILURE',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      error!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: scheme.error,
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  key: const ValueKey<String>('splash_loader'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.router_outlined, color: scheme.primary, size: 48),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'INITIALIZING LOCAL_MESH…',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        letterSpacing: 0.8,
+                        fontSize: 12,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }

@@ -40,7 +40,13 @@ abstract class Transport {
   String get name;
   Future<void> start();
   Future<void> stop();
+
+  /// Updates the battery saver mode for this transport.
+  /// Typically changes scan intervals or power levels.
+  Future<void> updateBatterySaver(bool enabled);
+
   Stream<PeerEvent> get peerEvents;
+
   Stream<TransportPayload> get incomingData;
   Future<void> sendTo(String peerId, Uint8List data);
   Future<void> broadcast(Uint8List data);

@@ -33,6 +33,10 @@ class TransportManager {
     }
   }
 
+  Future<void> updateBatterySaver(bool enabled) async {
+    await Future.wait(_transports.map((t) => t.updateBatterySaver(enabled)));
+  }
+
   Future<void> sendTo(String peerId, Uint8List data) async {
     var attempted = false;
     var succeeded = false;

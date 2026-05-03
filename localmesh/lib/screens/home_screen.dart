@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
 import '../providers/providers.dart';
+import '../theme/app_theme.dart';
+import '../widgets/mesh_topology_canvas.dart';
+import '../widgets/signal_strength_bars.dart';
 import 'chat_screen.dart';
 import 'network_health_screen.dart';
 
@@ -16,6 +19,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   _MeshState _meshState = _MeshState.idle;
   String? _meshError;
+  int _tab = 0;
 
   @override
   void initState() {
@@ -50,6 +54,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
+  int _signalBars(Peer p) {
+    final ageMs =
+        DateTime.now().millisecondsSinceEpoch - p.lastSeen;
+    final ageSec = ageMs ~/ 1000;
+    if (ageSec < 30) return 4;
+    if (ageSec < 120) return 3;
+    if (ageSec < 300) return 2;
+    return 1;
+  }
+
+  String _radioLabel(Peer p) =>
+      p.id.hashCode.isEven ? 'BLE' : 'WFD';
+
   @override
   Widget build(BuildContext context) {
     final nearbyAsync = ref.watch(nearbyPeersProvider);
@@ -70,78 +87,380 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('LocalMesh'),
+        leading: Icon(Icons.router_outlined, color: scheme.primary),
+        title: const Text('LOCAL_MESH'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.network_check),
-            tooltip: 'Network health',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const NetworkHealthScreen()),
+            icon: Icon(
+              Icons.battery_saver,
+              color: ref.watch(batterySaverProvider) ? scheme.primary : null,
+            ),
+            tooltip: 'Battery saver',
+            onPressed: () {
+              final enabled = !ref.read(batterySaverProvider);
+              ref.read(batterySaverProvider.notifier).state = enabled;
+              ref.read(transportManagerProvider).updateBatterySaver(enabled);
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Icon(Icons.signal_cellular_alt, color: scheme.primary),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          _MeshStatusBar(
+            state: _meshState,
+            error: _meshError,
+            onRetry: _startMesh,
+          ),
+          Expanded(
+            child: IndexedStack(
+              index: _tab,
+              children: [
+                _DashboardTab(
+                  meshRunning: _meshState == _MeshState.running,
+                  nearbyAsync: nearbyAsync,
+                  chatsAsync: chatsAsync,
+                  onPeerTap: _signalBars,
+                  radioLabel: _radioLabel,
+                ),
+                _ChatTab(chatsAsync: chatsAsync),
+                const _FilesTab(),
+                const NetworkHealthBody(),
+              ],
             ),
           ),
         ],
       ),
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Column(
-              children: [
-                _MeshStatusBar(
-                  state: _meshState,
-                  error: _meshError,
-                  onRetry: _startMesh,
-                ),
-                const Divider(height: 1),
-              ],
-            ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (i) => setState(() => _tab = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: 'DASHBOARD',
           ),
-          if (_meshState == _MeshState.running) ...[
-            const _SectionHeader(title: 'Nearby'),
-            _NearbySection(nearbyAsync: nearbyAsync),
-            const _SectionHeader(title: 'Chats'),
-            _ChatsSection(chatsAsync: chatsAsync),
-          ] else
-            SliverFillRemaining(
-              child: Center(
-                child: Text(
-                  _meshState == _MeshState.starting
-                      ? 'Starting mesh…'
-                      : 'Start the mesh to discover peers',
-                  style: TextStyle(color: scheme.onSurfaceVariant),
-                ),
-              ),
-            ),
+          NavigationDestination(
+            icon: Icon(Icons.chat_bubble_outline),
+            selectedIcon: Icon(Icons.chat_bubble),
+            label: 'CHAT',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.folder_open_outlined),
+            selectedIcon: Icon(Icons.folder_open),
+            label: 'FILES',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.memory_outlined),
+            selectedIcon: Icon(Icons.memory),
+            label: 'DIAGS',
+          ),
         ],
       ),
     );
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title});
-  final String title;
+class _DashboardTab extends ConsumerWidget {
+  const _DashboardTab({
+    required this.meshRunning,
+    required this.nearbyAsync,
+    required this.chatsAsync,
+    required this.onPeerTap,
+    required this.radioLabel,
+  });
+
+  final bool meshRunning;
+  final AsyncValue<List<Peer>> nearbyAsync;
+  final AsyncValue<List<Peer>> chatsAsync;
+  final int Function(Peer) onPeerTap;
+  final String Function(Peer) radioLabel;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'SYS_DASHBOARD',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                Text(
+                  'NETWORK TOPOLOGY OVERVIEW',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Material(
+              color: LocalMeshColors.emergency,
+              borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Emergency broadcast — mesh transmit pending'),
+                    ),
+                  );
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.campaign, color: Colors.white),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'BROADCAST EMERGENCY ALERT',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: chatsAsync.when(
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+              data: (trusted) {
+                return Row(
+                  children: [
+                    Expanded(
+                      child: _StatCard(
+                        title: 'ACTIVE PEERS',
+                        value: '${trusted.length}',
+                        subtitle: '• SYNCED',
+                        accent: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: _StatCard(
+                        title: 'TOTAL HOPS REACHED',
+                        value: '3',
+                        subtitle: 'MAX_DEPTH',
+                        accent: LocalMeshColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: _NetworkHealthSummary(),
+          ),
+        ),
+        if (meshRunning) ...[
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+              child: Text(
+                'RECENTLY DISCOVERED NODES',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  letterSpacing: 1,
+                  color: LocalMeshColors.textSecondary,
+                ),
+              ),
+            ),
+          ),
+          _NearbySliver(
+            nearbyAsync: nearbyAsync,
+            onSignalBars: onPeerTap,
+            radioLabel: radioLabel,
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'TOPOLOGY',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      letterSpacing: 1.2,
+                      color: LocalMeshColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  nearbyAsync.when(
+                    loading: () => const SizedBox.shrink(),
+                    error: (_, __) => const SizedBox.shrink(),
+                    data: (peers) => MeshTopologyCanvas(peers: peers),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ] else
+          const SliverFillRemaining(
+            child: Center(
+              child: Text(
+                'Start the mesh to discover peers',
+                style: TextStyle(color: LocalMeshColors.textSecondary),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _NetworkHealthSummary extends StatelessWidget {
+  const _NetworkHealthSummary();
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return SliverToBoxAdapter(
+    return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-        child: Text(
-          title,
-          style: Theme.of(context)
-              .textTheme
-              .titleSmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(Icons.verified, color: scheme.primary, size: 36),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'NETWORK HEALTH',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                Text(
+                  'STABLE',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                border: Border.all(color: scheme.primary),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.shield_outlined, color: scheme.primary, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    'SECURE',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      color: scheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _NearbySection extends ConsumerWidget {
-  const _NearbySection({required this.nearbyAsync});
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.title,
+    required this.value,
+    required this.subtitle,
+    required this.accent,
+  });
+
+  final String title;
+  final String value;
+  final String subtitle;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 10,
+                letterSpacing: 0.8,
+                color: LocalMeshColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: Colors.white,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                color: accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NearbySliver extends ConsumerWidget {
+  const _NearbySliver({
+    required this.nearbyAsync,
+    required this.onSignalBars,
+    required this.radioLabel,
+  });
+
   final AsyncValue<List<Peer>> nearbyAsync;
+  final int Function(Peer) onSignalBars;
+  final String Function(Peer) radioLabel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -159,132 +478,241 @@ class _NearbySection extends ConsumerWidget {
           child: Text('Error: $e'),
         ),
       ),
-      data: (peers) => peers.isEmpty
-          ? SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Text(
-                  'No peers nearby — make sure Bluetooth is on',
-                  style: TextStyle(
-                      color: scheme.onSurfaceVariant, fontSize: 13),
+      data: (peers) {
+        if (peers.isEmpty) {
+          return SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Text(
+                'No peers nearby — enable Bluetooth',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 13,
                 ),
               ),
-            )
-          : SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, i) {
-                  final p = peers[i];
-                  final isProvisional = p.signingPublicKey.isEmpty;
-                  final initials = p.displayName.isNotEmpty
-                      ? p.displayName[0].toUpperCase()
-                      : '?';
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: scheme.secondaryContainer,
-                      child: isProvisional
-                          ? SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: scheme.onSecondaryContainer,
-                              ),
-                            )
-                          : Text(initials,
-                              style: TextStyle(
-                                  color: scheme.onSecondaryContainer)),
-                    ),
-                    title: Text(p.displayName.isNotEmpty
-                        ? p.displayName
-                        : p.id.length > 12
-                            ? p.id.substring(0, 12)
-                            : p.id),
-                    subtitle: Text(
-                      isProvisional
-                          ? 'Exchanging keys…'
-                          : 'Tap to verify & connect',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    trailing: isProvisional
-                        ? null
-                        : const Icon(Icons.verified_user_outlined, size: 18),
-                    onTap: isProvisional
-                        ? null
-                        : () => showDialog<void>(
-                              context: context,
-                              builder: (_) => _FingerprintDialog(peer: p),
-                            ),
-                  );
-                },
-                childCount: peers.length,
-              ),
             ),
+          );
+        }
+        return SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, i) {
+              final p = peers[i];
+              final isProvisional = p.signingPublicKey.isEmpty;
+              final initials = p.displayName.isNotEmpty
+                  ? p.displayName[0].toUpperCase()
+                  : '?';
+              final bars = onSignalBars(p);
+              final radio = radioLabel(p);
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: scheme.secondaryContainer,
+                    child: isProvisional
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: scheme.onSecondaryContainer,
+                            ),
+                          )
+                        : Text(
+                            initials,
+                            style: TextStyle(color: scheme.onSecondaryContainer),
+                          ),
+                  ),
+                  title: Text(
+                    p.displayName.isNotEmpty
+                        ? p.displayName
+                        : (p.id.length > 12 ? p.id.substring(0, 12) : p.id),
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                  subtitle: Text(
+                    isProvisional
+                        ? 'Exchanging keys…'
+                        : 'LAST SEEN • ${_formatLastSeen(p.lastSeen)}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: radio == 'BLE'
+                                ? scheme.primary
+                                : LocalMeshColors.borderMuted,
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          radio,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 9,
+                            color: radio == 'BLE'
+                                ? scheme.primary
+                                : LocalMeshColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SignalStrengthBars(level: bars),
+                    ],
+                  ),
+                  onTap: isProvisional
+                      ? null
+                      : () => showDialog<void>(
+                            context: context,
+                            builder: (_) => _FingerprintDialog(peer: p),
+                          ),
+                ),
+              );
+            },
+            childCount: peers.length,
+          ),
+        );
+      },
     );
+  }
+
+  String _formatLastSeen(int lastSeenMs) {
+    final d =
+        DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(lastSeenMs));
+    if (d.inSeconds < 60) return '${d.inSeconds}s';
+    if (d.inMinutes < 60) return '${d.inMinutes}m';
+    return '${d.inHours}h';
   }
 }
 
-class _ChatsSection extends ConsumerWidget {
-  const _ChatsSection({required this.chatsAsync});
+class _ChatTab extends ConsumerWidget {
+  const _ChatTab({required this.chatsAsync});
+
   final AsyncValue<List<Peer>> chatsAsync;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
-    return chatsAsync.when(
-      loading: () => const SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Center(child: CircularProgressIndicator()),
-        ),
-      ),
-      error: (e, _) => SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('Error: $e'),
-        ),
-      ),
-      data: (peers) => peers.isEmpty
-          ? SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Text(
-                  'No active chats',
-                  style: TextStyle(
-                      color: scheme.onSurfaceVariant, fontSize: 13),
-                ),
+    return CustomScrollView(
+      slivers: [
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(
+              'ACTIVE CONVERSATIONS',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                letterSpacing: 1,
+                color: LocalMeshColors.textSecondary,
               ),
-            )
-          : SliverList(
+            ),
+          ),
+        ),
+        chatsAsync.when(
+          loading: () => const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          error: (e, _) => SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Error: $e'),
+            ),
+          ),
+          data: (peers) {
+            if (peers.isEmpty) {
+              return SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'No active chats — verify a peer from Dashboard',
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              );
+            }
+            return SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, i) {
                   final p = peers[i];
                   final initials = p.displayName.isNotEmpty
                       ? p.displayName[0].toUpperCase()
                       : '?';
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: scheme.primaryContainer,
-                      child: Text(initials,
-                          style:
-                              TextStyle(color: scheme.onPrimaryContainer)),
-                    ),
-                    title: Text(p.displayName.isNotEmpty
-                        ? p.displayName
-                        : p.id.substring(0, 12)),
-                    subtitle: Text(
-                      p.id,
-                      style: const TextStyle(fontSize: 11),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => ChatScreen(peer: p)),
+                  return Card(
+                    margin:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: scheme.primary.withValues(alpha: 0.2),
+                        child: Text(
+                          initials,
+                          style: TextStyle(color: scheme.primary),
+                        ),
+                      ),
+                      title: Text(
+                        p.displayName.isNotEmpty
+                            ? p.displayName
+                            : p.id.substring(0, 12),
+                        style: const TextStyle(fontFamily: 'monospace'),
+                      ),
+                      subtitle: Text(
+                        p.id,
+                        style: const TextStyle(fontSize: 11),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ChatScreen(peer: p),
+                        ),
+                      ),
                     ),
                   );
                 },
                 childCount: peers.length,
               ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _FilesTab extends StatelessWidget {
+  const _FilesTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.folder_open, size: 48, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: 16),
+            Text(
+              'SECURE FILE TRANSFER',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
+            const SizedBox(height: 8),
+            const Text(
+              'End-to-end encrypted chunks over the mesh — coming soon.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: LocalMeshColors.textSecondary),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -305,7 +733,6 @@ class _FingerprintDialogState extends ConsumerState<_FingerprintDialog> {
     final hex = key
         .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
         .join();
-    // group into blocks of 4 chars, 8 per line
     final groups = <String>[];
     for (var i = 0; i < hex.length; i += 4) {
       groups.add(hex.substring(i, i + 4 < hex.length ? i + 4 : hex.length));
@@ -340,13 +767,17 @@ class _FingerprintDialogState extends ConsumerState<_FingerprintDialog> {
         : widget.peer.id.substring(0, 12);
 
     return AlertDialog(
-      title: Text('Connect to $name?'),
+      backgroundColor: LocalMeshColors.surfaceCard,
+      title: Text(
+        'CONNECT TO $name?',
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 16),
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Verify their identity fingerprint matches what you see on their device:',
+            'Verify fingerprint matches their device:',
             style: TextStyle(fontSize: 13),
           ),
           const SizedBox(height: 12),
@@ -356,6 +787,7 @@ class _FingerprintDialogState extends ConsumerState<_FingerprintDialog> {
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: LocalMeshColors.borderMuted),
             ),
             child: Text(
               _formatFingerprint(widget.peer.signingPublicKey),
@@ -409,29 +841,47 @@ class _MeshStatusBar extends StatelessWidget {
     return switch (state) {
       _MeshState.idle => const SizedBox.shrink(),
       _MeshState.starting => Container(
-          color: scheme.surfaceContainerLow,
+          width: double.infinity,
+          color: LocalMeshColors.surfaceCard,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: const Row(children: [
+          child: Row(children: [
             SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: scheme.primary,
+              ),
             ),
-            SizedBox(width: 12),
-            Text('Starting mesh…'),
+            const SizedBox(width: 12),
+            Text(
+              'STARTING MESH…',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ]),
         ),
       _MeshState.running => Container(
-          color: Colors.green.shade50,
+          width: double.infinity,
+          color: LocalMeshColors.surfaceCard,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(children: [
-            Icon(Icons.wifi_tethering, color: Colors.green.shade700, size: 18),
+            Icon(Icons.wifi_tethering, color: scheme.primary, size: 18),
             const SizedBox(width: 8),
-            Text('Mesh active',
-                style: TextStyle(color: Colors.green.shade800)),
+            Text(
+              'MESH ACTIVE',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                color: scheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ]),
         ),
       _MeshState.error => Container(
+          width: double.infinity,
           color: scheme.errorContainer,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(children: [

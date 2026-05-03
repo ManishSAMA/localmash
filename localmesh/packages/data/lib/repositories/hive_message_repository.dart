@@ -23,7 +23,11 @@ class HiveMessageRepository implements MessageRepository {
       messages = messages.where((m) => m.lamportTs > afterLamportTs).toList();
     }
 
-    messages.sort((a, b) => a.lamportTs.compareTo(b.lamportTs));
+    messages.sort((a, b) {
+      final cmp = a.lamportTs.compareTo(b.lamportTs);
+      if (cmp != 0) return cmp;
+      return a.id.compareTo(b.id);
+    });
 
     if (messages.length > limit) {
       messages = messages.sublist(messages.length - limit);

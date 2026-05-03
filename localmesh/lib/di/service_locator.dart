@@ -41,8 +41,10 @@ Future<void> setupServiceLocator() async {
     () => TransportManager([
       getIt<TcpLanTransport>(),
       getIt<BleTransport>(),
+      getIt<WifiDirectTransport>(),
     ]),
   );
+
 
   // Use cases
   getIt.registerFactory<CreateIdentity>(() => CreateIdentity(

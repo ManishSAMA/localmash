@@ -67,6 +67,11 @@ class MockTransport implements Transport {
     }
   }
 
+  @override
+  Future<void> updateBatterySaver(bool enabled) async {
+    // No-op for mock
+  }
+
   /// Connect this node to [other] bidirectionally.
   void linkTo(MockTransport other) {
     if (_linked.containsKey(other.peerId)) return;

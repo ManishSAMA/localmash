@@ -5,6 +5,7 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import '../transport.dart';
 import 'android_ble_gatt_server.dart';
+import 'ble_frame_buffer.dart';
 
 // LocalMesh BLE service/characteristic UUIDs — must match across all devices
 const String _serviceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -30,7 +31,7 @@ class BleTransport implements Transport {
   StreamSubscription<BleGattServerEvent>? _gattServerSub;
   final List<StreamSubscription<dynamic>> _connectionSubs = [];
   final AndroidBleGattServer _gattServer = AndroidBleGattServer();
-  final Map<String, _BleFrameBuffer> _frameBuffers = {};
+  final Map<String, BleFrameBuffer> _frameBuffers = {};
   final StreamController<String> _errorCtrl =
       StreamController<String>.broadcast();
 
@@ -213,7 +214,7 @@ class BleTransport implements Transport {
       }
       // write-with-response for every chunk — one ATT RTT per 200 B is the
       // safe choice. write-without-response silently drops chunks on lossy
-      // links, permanently stalling _BleFrameBuffer with a partial frame.
+      // links, permanently stalling BleFrameBuffer with a partial frame.
       await _ble.writeCharacteristicWithResponse(char, value: chunk);
     }
   }
@@ -244,6 +245,32 @@ class BleTransport implements Transport {
       for (final p in connectedPeers)
         sendTo(p, data).catchError((_) {}),
     ]);
+  }
+
+  @override
+  Future<void> updateBatterySaver(bool enabled) async {
+    if (_state != TransportState.running) return;
+    
+    // Restart scan with new mode
+    await _scanSub?.cancel();
+    _scanSub = _ble.scanForDevices(
+      withServices: [Uuid.parse(_serviceUuid)],
+      scanMode: enabled ? ScanMode.lowPower : ScanMode.lowLatency,
+    ).listen(
+      (device) async {
+        debugPrint(
+          '[TRANSPORT][BLE] peer discovered id=${device.id} name="${device.name}"',
+        );
+        final peer = _peers[device.id];
+        if (peer?.centralConnected == true) return;
+        await _connectToPeer(device);
+      },
+      onError: (Object e) {
+        _state = TransportState.error;
+        debugPrint('[TRANSPORT][BLE] scan failed: $e');
+      },
+    );
+    debugPrint('[TRANSPORT][BLE] battery saver ${enabled ? 'on' : 'off'} (ScanMode updated)');
   }
 
   @override
@@ -334,7 +361,7 @@ class BleTransport implements Transport {
     Uint8List chunk, {
     required String source,
   }) {
-    final buffer = _frameBuffers.putIfAbsent(peerId, _BleFrameBuffer.new);
+    final buffer = _frameBuffers.putIfAbsent(peerId, BleFrameBuffer.new);
     final frames = buffer.addChunk(chunk);
     for (final frame in frames) {
       debugPrint(
@@ -413,30 +440,4 @@ class _ConnectedPeer {
   bool lastEmittedConnected = false;
 
   bool get isConnected => centralConnected || peripheralConnected;
-}
-
-class _BleFrameBuffer {
-  final List<int> _buffer = <int>[];
-  int? _expectedFrameLength;
-
-  List<Uint8List> addChunk(Uint8List chunk) {
-    _buffer.addAll(chunk);
-    final frames = <Uint8List>[];
-
-    while (true) {
-      if (_expectedFrameLength == null) {
-        if (_buffer.length < _bleFrameHeaderSize) break;
-        _expectedFrameLength = (_buffer[0] << 8) | _buffer[1];
-        _buffer.removeRange(0, _bleFrameHeaderSize);
-      }
-
-      if (_buffer.length < _expectedFrameLength!) break;
-
-      frames.add(Uint8List.fromList(_buffer.sublist(0, _expectedFrameLength!)));
-      _buffer.removeRange(0, _expectedFrameLength!);
-      _expectedFrameLength = null;
-    }
-
-    return frames;
-  }
 }

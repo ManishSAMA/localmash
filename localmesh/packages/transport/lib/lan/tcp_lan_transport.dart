@@ -108,6 +108,15 @@ class TcpLanTransport implements Transport {
     _state = TransportState.idle;
   }
 
+  @override
+  Future<void> updateBatterySaver(bool enabled) async {
+    _beaconTimer?.cancel();
+    final interval = enabled ? const Duration(seconds: 10) : const Duration(seconds: 3);
+    if (_state == TransportState.running) {
+      _beaconTimer = Timer.periodic(interval, (_) => _sendBeacon());
+    }
+  }
+
   // ── Discovery (UDP broadcast) ─────────────────────────────────────────────
 
   Future<void> _cacheLocalIps() async {

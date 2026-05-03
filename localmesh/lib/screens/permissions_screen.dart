@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../theme/app_theme.dart';
 
 class PermissionsScreen extends StatefulWidget {
   const PermissionsScreen({super.key, required this.onPermissionsGranted});
+
   final VoidCallback onPermissionsGranted;
 
   @override
@@ -34,7 +36,6 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
     if (!mounted) return;
 
     if (allGranted) {
-      // Also request nearby wifi devices — optional, doesn't block
       await Permission.nearbyWifiDevices.request();
       widget.onPermissionsGranted();
     } else {
@@ -50,73 +51,91 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
+      appBar: AppBar(
+        leading: Icon(Icons.router_outlined, color: scheme.primary),
+        title: const Text('LOCAL_MESH'),
+      ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(32),
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Spacer(),
-              Icon(Icons.bluetooth_searching,
-                  size: 72, color: scheme.primary),
-              const SizedBox(height: 32),
+              const SizedBox(height: 8),
               Text(
-                'Permissions needed',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                'RADIO PERMISSIONS',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'SYS_SCAN_ACCESS',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 12),
               Text(
-                'LocalMesh uses Bluetooth to discover and connect with nearby devices — no internet required.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyMedium
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+                'Bluetooth Low Energy discovers mesh peers; no cloud. '
+                'Android requires location for BLE scan on many devices.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: LocalMeshColors.textSecondary,
+                      height: 1.45,
+                    ),
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 28),
+              Icon(
+                Icons.bluetooth_searching,
+                size: 56,
+                color: scheme.primary,
+              ),
+              const SizedBox(height: 28),
               const _PermissionRow(
                 icon: Icons.bluetooth,
-                label: 'Bluetooth scan & connect',
-                description: 'Discover nearby LocalMesh devices',
+                label: 'BLUETOOTH SCAN & CONNECT',
+                description: 'Discover and link nearby nodes',
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               const _PermissionRow(
                 icon: Icons.location_on_outlined,
-                label: 'Location',
-                description: 'Required by Android for BLE scanning',
+                label: 'LOCATION (WHILE IN USE)',
+                description: 'Required by OS for BLE scanning',
               ),
               const Spacer(),
               if (_permanentlyDenied) ...[
                 Text(
-                  'Some permissions were permanently denied. Open Settings to grant them.',
+                  'Permissions blocked — open Settings to enable.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: scheme.error),
+                  style: TextStyle(
+                    color: scheme.error,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.settings_outlined),
-                  label: const Text('Open Settings'),
+                  label: const Text('OPEN SETTINGS'),
                   onPressed: openAppSettings,
                 ),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: _requesting ? null : _requestPermissions,
-                  child: const Text('Try again'),
+                  child: const Text('TRY AGAIN'),
                 ),
               ] else
                 FilledButton.icon(
+                  key: const ValueKey('grant_permissions'),
                   icon: _requesting
                       ? const SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
+                            strokeWidth: 2,
+                            color: Color(0xFF0D1117),
+                          ),
                         )
                       : const Icon(Icons.check_circle_outline),
-                  label: Text(_requesting ? 'Requesting…' : 'Grant permissions'),
+                  label: Text(
+                    _requesting ? 'REQUESTING…' : 'GRANT PERMISSIONS',
+                  ),
                   onPressed: _requesting ? null : _requestPermissions,
                 ),
               const SizedBox(height: 16),
@@ -142,31 +161,52 @@ class _PermissionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: scheme.primaryContainer,
-            borderRadius: BorderRadius.circular(12),
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: LocalMeshColors.surfaceCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: LocalMeshColors.borderMuted),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: LocalMeshColors.borderMuted),
+            ),
+            child: Icon(icon, color: scheme.primary),
           ),
-          child: Icon(icon, color: scheme.onPrimaryContainer),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              Text(description,
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
                   style: TextStyle(
-                      fontSize: 12, color: scheme.onSurfaceVariant)),
-            ],
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

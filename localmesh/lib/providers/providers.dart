@@ -20,6 +20,8 @@ final currentIdentityProvider = FutureProvider<LocalMeshIdentity?>(
   (ref) async => ref.read(identityRepoProvider).getIdentity(),
 );
 
+final batterySaverProvider = StateProvider<bool>((ref) => false);
+
 // ── Transport ──
 final transportManagerProvider = Provider<TransportManager>(
   (ref) => getIt<TransportManager>(),
