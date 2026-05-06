@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(command -v nvm)",
-      "Read(//home/Manu/.nvm/**)",
-      "Read(//home/Manu/.local/share/**)"
-    ]
-  }
-}
